@@ -49,7 +49,7 @@ def test_list_is_filtered_per_persona(user, expected):
 def test_anonymous_sees_only_platform_published():
     # No user_id header: the runtime substitutes the literal string "None",
     # which matches nothing except user:* published networks. In production
-    # the SSO proxy guarantees the header exists; this documents the behavior.
+    # an SSO layer guarantees the header exists; this documents the behavior.
     assert list_agents(None) == {"alpha--public"}
 
 

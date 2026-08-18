@@ -19,9 +19,9 @@ authorization system authorizes its own administration:
                                 or super_admin
   access review                 can_administer on tenant            (read-only ListUsers sweep)
 
-Identity: the `user_id` header, set by the SSO proxy in production (same
+Identity: the `user_id` header, set by an SSO layer in a real deployment (same
 trusted-header contract as the runtime). Every write lands in a JSONL audit
-log - the stand-in for the production transactional outbox.
+log - the stand-in for a transactional outbox.
 
 Run:  .venv\\Scripts\\python.exe authz\\admin_api.py   (port 8300)
 """
@@ -113,7 +113,7 @@ def fga_read(user: str, obj: str) -> List[Dict[str, Any]]:
 
 def caller_id(user_id: Optional[str]) -> str:
     if not user_id:
-        raise HTTPException(401, "user_id header required (set by the SSO proxy in production)")
+        raise HTTPException(401, "user_id header required (set by an SSO layer in a real deployment)")
     return user_id
 
 

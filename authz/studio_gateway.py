@@ -2,7 +2,7 @@
 Identity gateway for the neuro-san studio (nsflow).
 
 Sits between the nsflow backend and the neuro-san server and does the one job
-the SSO reverse proxy does in production: strip any inbound user_id header and
+an SSO layer does in a real deployment: strip any inbound user_id header and
 set the verified identity. Here the "verified identity" is the persona you
 pick, so you can watch enforcement happen inside the real studio UI.
 
@@ -126,7 +126,7 @@ class Handler(BaseHTTPRequestHandler):
                 request.add_header(name, value)
         with _lock:
             persona = _state["persona"]
-        # The production SSO proxy's job: strip self-asserted identity, set verified one.
+        # An SSO layer's job in a real deployment: strip self-asserted identity, set verified one.
         request.add_header("user_id", persona)
 
         try:

@@ -4,7 +4,7 @@ Persona console for Enterprise Vibe FGA.
 A zero-dependency local front end to test authorization by hand. Serves a
 single page at http://127.0.0.1:8200 and proxies /api/* to the neuro-san
 server, forwarding the user_id header the page sets. The proxy plays the role
-the SSO reverse proxy plays in production: it is the only thing that sets the
+an SSO layer plays in a real deployment: it is the only thing that sets the
 identity header the runtime trusts.
 
 Usage:
@@ -133,7 +133,7 @@ class Handler(BaseHTTPRequestHandler):
         request = urllib.request.Request(TARGET + self.path)
         user_id = self.headers.get("user_id")
         if user_id:
-            # The one job of the production SSO proxy, played here by us.
+            # The one job an SSO layer does in a real deployment, played here by us.
             request.add_header("user_id", user_id)
         try:
             with urllib.request.urlopen(request, timeout=30) as upstream:

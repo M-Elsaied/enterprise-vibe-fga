@@ -35,13 +35,13 @@ every surface (API, studio UI, admin operations), and prove every claim with a t
 The shape of this repo is a sequence of decisions, each forced by something we verified
 rather than assumed. Reading them in order explains every component:
 
-1. **Stopgap vs endstate.** The quick fixes - a group check at the reverse proxy, or a
-   custom SQL ACL lookup - gate the front door but evaluate policy at *write time*:
-   groups and approvals get flattened into rows that rot as people move teams. The
-   requirements (tenants, marketplace, entitlements) need *check-time* evaluation of
-   relationships - which is ReBAC, so we chose [OpenFGA](https://openfga.dev)
-   (the CNCF engine descended from Google's Zanzibar). Deciding factor: the neuro-san
-   runtime already ships an OpenFGA authorizer selectable by env var - **no fork**.
+1. **Why a relationship engine.** Static permission tables evaluate policy at *write
+   time*: group membership and approvals get flattened into rows that go stale as
+   people change teams. Requirements like tenants, marketplace sharing, and
+   entitlements need *check-time* evaluation of relationships - which is ReBAC, so we
+   chose [OpenFGA](https://openfga.dev) (the CNCF engine descended from Google's
+   Zanzibar). Deciding factor: the neuro-san runtime already ships an OpenFGA
+   authorizer selectable by env var - **no fork**.
 2. **Ground the model in what the runtime actually enforces.** Reading the runtime
    source: it checks exactly ONE relation on ONE object type per request
    (`can_invoke` on `agent_network`), object id = the network's hocon filename stem,
@@ -61,7 +61,7 @@ rather than assumed. Reading them in order explains every component:
    runtime enforces what the model says. Then we opened the actual studio UI - and
    found its client sends no identity on the list call and hardcodes chat identity.
    That discovery produced the **identity gateway**: assert identity at the hop the
-   runtime trusts, exactly where the SSO proxy asserts it in production. The persona
+   runtime trusts, exactly where an SSO layer would assert it in any deployment. The persona
    widget and console exist so anyone can *see* enforcement, not take our word.
 5. **The write side, last and deliberately thin.** Onboarding uses a **hybrid**: IdP
    security groups for steady state (the IdP already handles joiner/mover/leaver;
@@ -83,7 +83,7 @@ deployment.
 | Requirement | How |
 |---|---|
 | Teams segregated as tenants | `type tenant`; isolation is structural - no tuple path, no access |
-| Platform super users | `platform.super_admin` (one Entra group), transitive over everything |
+| Platform super users | `platform.super_admin` (one IdP group), transitive over everything |
 | Every tenant has an admin | `tenant.admin`, required at onboarding |
 | Marketplace publish | `published_to: [user:*, tenant#member]` - one tuple publishes platform-wide or to one tenant |
 | Common LLM by default | `user:* available_to llm_model:centralized-default` |
@@ -117,7 +117,7 @@ powershell -ExecutionPolicy Bypass -File authz\run_e2e.ps1 -KeepUp   # stack sta
 
 The persona console lets you switch between sam / ada / alice / bob / eve / anonymous and
 watch the concierge list and per-network 200/403 change live. Its tiny proxy injects the
-`user_id` header exactly the way the SSO reverse proxy does in production - the browser
+`user_id` header the way an SSO layer would in a real deployment - the browser
 never talks to the runtime directly with a self-asserted identity.
 
 ### See enforcement in the real studio (nsflow)
@@ -145,7 +145,7 @@ remains at http://127.0.0.1:8210/__persona.
 
 Why the gateway is required: nsflow 0.6.19 sends no `user_id` on its concierge call and
 hardcodes chat identity to the backend's `USER` env var, so identity must be asserted at
-the hop the runtime trusts - the same place the SSO reverse proxy asserts it in production
+the hop the runtime trusts - the same place an SSO layer would assert it in any deployment
 (`browser -> nsflow -> gateway -> neuro-san -> OpenFGA`).
 
 ## The personas, visualized
@@ -162,7 +162,7 @@ Sees all three networks. `super_admin` on `platform:vibe` inherits through every
 
 ### ada - tenant alpha admin
 
-Sees `alpha--private` and `alpha--public`. Admin of tenant alpha via her Entra-style group
+Sees `alpha--private` and `alpha--public`. Admin of tenant alpha via her IdP group
 binding; no path to tenant beta's objects.
 
 ![ada sees alpha's networks](docs/images/persona-ada.jpg)
@@ -314,7 +314,7 @@ removal revokes it immediately, and the last-admin invariant holds.
 4. **Grant `user:system`** for networks the periodic event watcher must reach.
 5. **A missing `user_id` header authorizes as the literal string `"None"`** - it can still
    invoke `user:*`-published networks. Authentication in front of the runtime is mandatory;
-   the SSO proxy must strip and re-set the header from the verified token.
+   whatever SSO layer you deploy must strip and re-set the header from the verified token.
 6. **Authorization runs before existence**: probing an unknown network returns 403, not 404.
 7. **Catalog objects need their platform link tuple** (`platform:vibe platform llm_model:X`)
    or super-admin inheritance silently fails. Found by the model test suite.
