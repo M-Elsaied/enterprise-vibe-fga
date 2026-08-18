@@ -14,6 +14,70 @@ Everything here is verified end to end: model-layer tests run against the FGA CL
 engine, and a live E2E suite runs a real OpenFGA server plus a real neuro-san server and
 asserts allow/deny per persona over HTTP.
 
+## The objective
+
+Picture an enterprise agent platform: one shared cluster, ~100 teams, 500+ employees.
+Teams build agent networks and connectors that must stay **private to their team by
+default**, yet any team can **publish** its work to a marketplace for everyone (or share
+it with one specific team). A small core team operates the platform as **super admins**.
+Every team has its **own admin** who onboards teammates. The platform pays for one
+**centralized LLM** everyone uses; later, specific teams get other models **approved
+per tenant**, and eventually teams may **bring their own model keys** - both only under
+platform control. Access must be explainable to an auditor at any moment: who can touch
+what, and why.
+
+This repo is the authorization layer for that platform, built to be **right from the
+beginning** rather than retrofitted: model it once in a decision engine, enforce it at
+every surface (API, studio UI, admin operations), and prove every claim with a test.
+
+## How we got here (the design journey)
+
+The shape of this repo is a sequence of decisions, each forced by something we verified
+rather than assumed. Reading them in order explains every component:
+
+1. **Stopgap vs endstate.** The quick fixes - a group check at the reverse proxy, or a
+   custom SQL ACL lookup - gate the front door but evaluate policy at *write time*:
+   groups and approvals get flattened into rows that rot as people move teams. The
+   requirements (tenants, marketplace, entitlements) need *check-time* evaluation of
+   relationships - which is ReBAC, so we chose [OpenFGA](https://openfga.dev)
+   (the CNCF engine descended from Google's Zanzibar). Deciding factor: the neuro-san
+   runtime already ships an OpenFGA authorizer selectable by env var - **no fork**.
+2. **Ground the model in what the runtime actually enforces.** Reading the runtime
+   source: it checks exactly ONE relation on ONE object type per request
+   (`can_invoke` on `agent_network`), object id = the network's hocon filename stem,
+   and nothing in it ever writes a tuple. Consequence: the model funnels all
+   invocation rights into `can_invoke`, ids follow a `<tenant>--<name>` convention,
+   and everything else (create, publish, LLM approval, BYOM) is enforced by platform
+   services against the same store. That is the read/write split running through
+   this README.
+3. **Requirements became model shapes, not code.** Tenant isolation is structural
+   (no tuple path = no access, nothing to forget to check). Publishing is ONE tuple:
+   `user:*` for platform-wide, `tenant:X#member` for targeted - unpublish is deleting
+   it. LLM approval and BYOM are entitlements checked at publish time, because model
+   choice is baked into a network's config, not decided per request.
+4. **Verify before building on top.** The model-level test suite ran before any server
+   existed - and immediately caught a real bug (super admin did not inherit onto LLM
+   catalog objects without their `platform` link tuples). Then the live E2E proved the
+   runtime enforces what the model says. Then we opened the actual studio UI - and
+   found its client sends no identity on the list call and hardcodes chat identity.
+   That discovery produced the **identity gateway**: assert identity at the hop the
+   runtime trusts, exactly where the SSO proxy asserts it in production. The persona
+   widget and console exist so anyone can *see* enforcement, not take our word.
+5. **The write side, last and deliberately thin.** Onboarding uses a **hybrid**: IdP
+   security groups for steady state (the IdP already handles joiner/mover/leaver;
+   the sync just mirrors deltas into tuples) and direct tuples for exceptions. The
+   admin API checks its callers against the same model it administers, and holds the
+   two invariants the model cannot express (born with an admin; last admin
+   irremovable). The first super admin is a change-controlled seed - the root of the
+   trust chain.
+
+Everything that surprised us along the way is recorded in the gotchas section below,
+each with a test pinning it down. Deliberately NOT built here (yet): real SSO/IdP
+integration, the marketplace publish workflow, per-tenant key storage, and the
+production assurance jobs (shadow checks, reconcile, tripwire) - they are designed in
+`authz/README.md` but this repo ships the reference implementation and proof, not the
+deployment.
+
 ## What the model gives you
 
 | Requirement | How |
