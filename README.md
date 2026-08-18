@@ -65,11 +65,19 @@ $env:NEURO_SAN_SERVER_HOST="127.0.0.1"; $env:NEURO_SAN_SERVER_HTTP_PORT="8210"
 .venv\Scripts\python.exe -m nsflow.run --client-only                  # studio on :4173
 ```
 
-Open the studio at http://127.0.0.1:4173 and the persona switcher at
-http://127.0.0.1:8210/__persona. Switch persona, refresh the studio, and the
-Available Agents sidebar changes: alice sees `alpha--private` + `alpha--public`, bob sees
-`beta--internal` + `alpha--public`, sam sees everything. Chat and connectivity flow through
-the same gateway, so every studio action is authorized as the active persona.
+Then put the persona switcher INSIDE the studio (one-time, idempotent; re-run after any
+nsflow reinstall; `--remove` to undo):
+
+```powershell
+.venv\Scripts\python.exe authz\install_studio_widget.py
+```
+
+Open the studio at http://127.0.0.1:4173. A floating "FGA persona" pill bar sits in the
+bottom-right corner: click sam / ada / alice / bob / eve and the studio reloads as that
+persona - the Available Agents sidebar changes (alice sees `alpha--private` +
+`alpha--public`, bob sees `beta--internal` + `alpha--public`, sam sees everything), and
+chat and connectivity are authorized the same way. The standalone switcher page also
+remains at http://127.0.0.1:8210/__persona.
 
 Why the gateway is required: nsflow 0.6.19 sends no `user_id` on its concierge call and
 hardcodes chat identity to the backend's `USER` env var, so identity must be asserted at

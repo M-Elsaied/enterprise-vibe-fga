@@ -90,11 +90,26 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
         else:
             self.send_response(400)
+        # CORS so the in-studio widget (served from the nsflow origin) can call us.
+        self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def persona_state(self):
+        with _lock:
+            body = ('{"persona": "%s"}' % _state["persona"]).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     # ---- proxying ---------------------------------------------------------
     def forward(self):
+        if self.path.startswith("/__persona/state"):
+            self.persona_state()
+            return
         if self.path.startswith("/__persona/set"):
             self.persona_set()
             return
