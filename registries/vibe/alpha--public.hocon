@@ -1,0 +1,20 @@
+{
+    "llm_config": {
+        "model_name": "gpt-4o"
+    },
+    "metadata": {
+        "description": "Team Alpha's marketplace-published assistant. Published platform-wide via a user:* published_to tuple.",
+        "tags": ["tenancy-demo", "marketplace"]
+    },
+    "tools": [
+        {
+            "name": "alpha_public_assistant",
+            "function": {
+                "description": "Assistant published by team Alpha to the whole platform."
+            },
+            "instructions": """
+You are an assistant team Alpha published for everyone. Answer briefly.
+"""
+        }
+    ]
+}

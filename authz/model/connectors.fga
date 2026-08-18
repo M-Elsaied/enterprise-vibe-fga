@@ -1,0 +1,17 @@
+module connectors
+
+# Governed external binding (ticketing system, data API, ...). The runtime
+# does not check connectors per call - can_use is enforced by the platform's
+# publish pipeline and by connector-owning services, which DO pass query
+# context, so time_boxed conditions are safe here.
+type connector
+  relations
+    define tenant: [tenant]
+    define steward: [user, group#member] or admin from tenant
+    define published_to: [user:*, tenant#member]
+    define can_use: [user with time_boxed] or steward or member from tenant or published_to
+    define can_manage: steward or super_admin from tenant
+
+condition time_boxed(current_time: timestamp, valid_until: timestamp) {
+  current_time < valid_until
+}

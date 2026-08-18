@@ -1,0 +1,25 @@
+module core
+
+type user
+
+# Mirrors one IdP (e.g. Entra) security group. Membership tuples are written
+# only by the identity sync service - never by hand.
+type group
+  relations
+    define member: [user, group#member]
+
+# Singleton object, e.g. platform:vibe. Super admins are the core platform team.
+type platform
+  relations
+    define super_admin: [user, group#member]
+
+# One tenant per team. Isolation is structural: a check succeeds only if a
+# tuple path exists, so members of tenant A have no path to tenant B's objects.
+type tenant
+  relations
+    define platform: [platform]
+    define admin: [user, group#member]
+    define member: [user, group#member] or admin
+    define super_admin: super_admin from platform
+    define can_administer: admin or super_admin
+    define can_create_network: member or super_admin

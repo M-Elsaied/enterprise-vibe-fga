@@ -1,0 +1,22 @@
+module entitlements
+
+# LLM governance. available_to carries both shapes:
+#   user:*          -> the centralized default model, usable by everyone
+#   tenant:X#member -> a super-admin approval of model X for one tenant
+# Enforced at publish time (when a network's hocon references the model),
+# not per request.
+type llm_model
+  relations
+    define platform: [platform]
+    define available_to: [user:*, tenant#member]
+    define can_use: available_to or super_admin from platform
+    define can_approve: super_admin from platform
+
+# Platform feature entitlements, e.g. feature:byom (bring-your-own-model).
+# Checked by the key-registration API; the API key itself lives in the
+# secret store, never in a tuple.
+type feature
+  relations
+    define platform: [platform]
+    define enabled_for: [user, tenant#member]
+    define can_use: enabled_for or super_admin from platform

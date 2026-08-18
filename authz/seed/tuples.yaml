@@ -1,0 +1,30 @@
+# Demo/E2E authorization state. Written with: fga tuple write --store-id <id> --file tuples.yaml
+# Personas: sam = platform super admin, ada = tenant alpha admin, alice = alpha member,
+#           bob = beta member, eve = authenticated stranger (no tuples at all).
+- {user: "user:sam", relation: member, object: "group:core"}
+- {user: "group:core#member", relation: super_admin, object: "platform:vibe"}
+
+- {user: "platform:vibe", relation: platform, object: "tenant:alpha"}
+- {user: "user:ada", relation: member, object: "group:alpha-admins"}
+- {user: "group:alpha-admins#member", relation: admin, object: "tenant:alpha"}
+- {user: "user:alice", relation: member, object: "group:alpha-team"}
+- {user: "group:alpha-team#member", relation: member, object: "tenant:alpha"}
+
+- {user: "platform:vibe", relation: platform, object: "tenant:beta"}
+- {user: "user:bob", relation: member, object: "group:beta-team"}
+- {user: "group:beta-team#member", relation: member, object: "tenant:beta"}
+
+# alpha--private: visible to tenant alpha only
+- {user: "tenant:alpha", relation: tenant, object: "agent_network:alpha--private"}
+- {user: "user:alice", relation: builder, object: "agent_network:alpha--private"}
+# alpha--public: published platform-wide (the marketplace tuple)
+- {user: "tenant:alpha", relation: tenant, object: "agent_network:alpha--public"}
+- {user: "user:*", relation: published_to, object: "agent_network:alpha--public"}
+# beta--internal: visible to tenant beta only
+- {user: "tenant:beta", relation: tenant, object: "agent_network:beta--internal"}
+
+# llm entitlements (platform link tuples first: super_admin inherits through them)
+- {user: "platform:vibe", relation: platform, object: "llm_model:centralized-default"}
+- {user: "platform:vibe", relation: platform, object: "llm_model:premium-opus"}
+- {user: "user:*", relation: available_to, object: "llm_model:centralized-default"}
+- {user: "tenant:alpha#member", relation: available_to, object: "llm_model:premium-opus"}

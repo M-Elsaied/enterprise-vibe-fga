@@ -1,0 +1,8 @@
+{
+    # Tenancy demo networks. Names follow <tenant-slug>--<network-slug> so the
+    # served network name (hocon filename stem) matches the agent_network
+    # object id in the OpenFGA store.
+    "alpha--private.hocon": true,
+    "alpha--public.hocon": true,
+    "beta--internal.hocon": true,
+}

@@ -1,0 +1,6 @@
+# Minimal environment for the authorization layer and its E2E suite.
+# The full studio environment is requirements.txt at the repo root.
+neuro-san==0.6.94
+openfga-sdk>=0.9
+pytest>=8.0
+requests>=2.31

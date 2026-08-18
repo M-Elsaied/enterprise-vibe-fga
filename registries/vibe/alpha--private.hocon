@@ -1,0 +1,20 @@
+{
+    "llm_config": {
+        "model_name": "gpt-4o"
+    },
+    "metadata": {
+        "description": "Team Alpha's private assistant. Visible only to tenant alpha.",
+        "tags": ["tenancy-demo"]
+    },
+    "tools": [
+        {
+            "name": "alpha_private_assistant",
+            "function": {
+                "description": "Internal assistant for team Alpha. Not published."
+            },
+            "instructions": """
+You are team Alpha's internal assistant. Answer briefly.
+"""
+        }
+    ]
+}
