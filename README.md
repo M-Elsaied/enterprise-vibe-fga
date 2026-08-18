@@ -84,6 +84,85 @@ hardcodes chat identity to the backend's `USER` env var, so identity must be ass
 the hop the runtime trusts - the same place the SSO reverse proxy asserts it in production
 (`browser -> nsflow -> gateway -> neuro-san -> OpenFGA`).
 
+## The personas, visualized
+
+Same studio, same server, same model - the only thing that changes between these five
+screenshots is the identity on the wire. The persona pill bar (bottom-right) switches it;
+the Available Agents sidebar is the enforcement result.
+
+### sam - platform super admin
+
+Sees all three networks. `super_admin` on `platform:vibe` inherits through every tenant.
+
+![sam sees every network](docs/images/persona-sam.jpg)
+
+### ada - tenant alpha admin
+
+Sees `alpha--private` and `alpha--public`. Admin of tenant alpha via her Entra-style group
+binding; no path to tenant beta's objects.
+
+![ada sees alpha's networks](docs/images/persona-ada.jpg)
+
+### alice - alpha member and builder
+
+Same visibility as ada (member of tenant alpha), but fewer rights on them: she can edit
+what she built, and cannot publish or administer.
+
+![alice sees alpha's networks](docs/images/persona-alice.jpg)
+
+### bob - beta member
+
+The mirror image: `beta--internal` plus `alpha--public`. He sees alpha's published network
+because of the single marketplace tuple `user:* published_to agent_network:alpha--public`,
+and nothing else of alpha's.
+
+![bob sees beta's network plus the published one](docs/images/persona-bob.jpg)
+
+### eve - authenticated stranger, zero grants
+
+Only the marketplace-published network survives. Everything else is invisible AND returns
+403 if probed directly.
+
+![eve sees only the published network](docs/images/persona-eve.jpg)
+
+## What this change adds (file tree)
+
+Everything below is introduced by this repo; every file not shown is the unmodified
+upstream neuro-san-studio snapshot.
+
+```
+enterprise-vibe-fga/
+|-- README.md                     NEW  this file (upstream README moved to docs/)
+|-- .gitignore                    MOD  ignores tools/, .e2e-logs/, generated model.json
+|-- authz/                        NEW  the authorization layer
+|   |-- model/
+|   |   |-- fga.mod                    modular model manifest
+|   |   |-- core.fga                   user / group / platform / tenant
+|   |   |-- agents.fga                 agent_network + marketplace publish
+|   |   |-- connectors.fga             connector + time_boxed condition
+|   |   `-- entitlements.fga           llm_model + feature (BYOM)
+|   |-- tests/
+|   |   `-- tenancy.fga.yaml           fga model test suite (grants AND denials)
+|   |-- seed/
+|   |   `-- tuples.yaml                demo personas and grants
+|   |-- run_e2e.ps1                    one-command end-to-end run
+|   |-- requirements-authz.txt         minimal python deps
+|   |-- demo_ui.py                     persona console (standalone front end, :8200)
+|   |-- studio_gateway.py              identity gateway nsflow -> neuro-san (:8210)
+|   |-- install_studio_widget.py       injects the in-studio persona pill bar
+|   `-- README.md                      layer docs: test layers, runbook, tuple writers
+|-- registries/vibe/              NEW  demo tenant networks
+|   |-- manifest.hocon
+|   |-- alpha--private.hocon           tenant alpha only
+|   |-- alpha--public.hocon            published platform-wide
+|   `-- beta--internal.hocon           tenant beta only
+|-- tests/e2e_authz/              NEW
+|   `-- test_tenancy_e2e.py            18 live HTTP assertions vs the running stack
+`-- docs/
+    |-- UPSTREAM-README.md        MOVED  original neuro-san-studio README
+    `-- images/persona-*.jpg      NEW   the five screenshots above
+```
+
 ## How enforcement works
 
 The neuro-san runtime checks exactly one relation on one type for every HTTP/MCP request:
