@@ -43,6 +43,19 @@ powershell -ExecutionPolicy Bypass -File authz\run_e2e.ps1
 
 Expected output: `Tests 4/4 passing`, then `18 passed`, then `ALL GREEN`.
 
+### Test it yourself from a front end
+
+```powershell
+powershell -ExecutionPolicy Bypass -File authz\run_e2e.ps1 -KeepUp   # stack stays running
+.venv\Scripts\python.exe authz\demo_ui.py                            # persona console
+# open http://127.0.0.1:8200
+```
+
+The persona console lets you switch between sam / ada / alice / bob / eve / anonymous and
+watch the concierge list and per-network 200/403 change live. Its tiny proxy injects the
+`user_id` header exactly the way the SSO reverse proxy does in production - the browser
+never talks to the runtime directly with a self-asserted identity.
+
 ## How enforcement works
 
 The neuro-san runtime checks exactly one relation on one type for every HTTP/MCP request:
