@@ -56,6 +56,26 @@ watch the concierge list and per-network 200/403 change live. Its tiny proxy inj
 `user_id` header exactly the way the SSO reverse proxy does in production - the browser
 never talks to the runtime directly with a self-asserted identity.
 
+### See enforcement in the real studio (nsflow)
+
+```powershell
+.venv\Scripts\python.exe -m pip install nsflow==0.6.19                # one time
+.venv\Scripts\python.exe authz\studio_gateway.py                      # identity gateway on :8210
+$env:NEURO_SAN_SERVER_HOST="127.0.0.1"; $env:NEURO_SAN_SERVER_HTTP_PORT="8210"
+.venv\Scripts\python.exe -m nsflow.run --client-only                  # studio on :4173
+```
+
+Open the studio at http://127.0.0.1:4173 and the persona switcher at
+http://127.0.0.1:8210/__persona. Switch persona, refresh the studio, and the
+Available Agents sidebar changes: alice sees `alpha--private` + `alpha--public`, bob sees
+`beta--internal` + `alpha--public`, sam sees everything. Chat and connectivity flow through
+the same gateway, so every studio action is authorized as the active persona.
+
+Why the gateway is required: nsflow 0.6.19 sends no `user_id` on its concierge call and
+hardcodes chat identity to the backend's `USER` env var, so identity must be asserted at
+the hop the runtime trusts - the same place the SSO reverse proxy asserts it in production
+(`browser -> nsflow -> gateway -> neuro-san -> OpenFGA`).
+
 ## How enforcement works
 
 The neuro-san runtime checks exactly one relation on one type for every HTTP/MCP request:
