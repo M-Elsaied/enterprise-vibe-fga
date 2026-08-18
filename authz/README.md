@@ -48,6 +48,12 @@ models and consistency parameters).
 
 ## Onboarding runbook (what writes which tuples)
 
+The governed writer is `admin_api.py` (port 8300): every endpoint checks the caller
+against OpenFGA before writing, enforces the born-with-an-admin and last-admin
+invariants, and appends to the JSONL audit trail. The `/idp/*` endpoints simulate the
+IdP sync path of the hybrid model. See the root README for the endpoint matrix; the
+table below maps events to tuples regardless of which writer performs them.
+
 | Event | Writer | Tuples |
 |---|---|---|
 | Platform bootstrap | pipeline seed | `group:core#member super_admin platform:<name>` |

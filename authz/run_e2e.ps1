@@ -85,9 +85,26 @@ try {
         }
     }
 
+    # ---- 4b. admin API ------------------------------------------------------
+    Write-Host "== starting admin API =="
+    $adminProc = Start-Process -FilePath $python -ArgumentList (Join-Path $root "authz\admin_api.py") `
+        -WorkingDirectory $root `
+        -RedirectStandardOutput "$logs\admin.out.log" -RedirectStandardError "$logs\admin.err.log" `
+        -PassThru -WindowStyle Hidden
+    $deadline = (Get-Date).AddSeconds(30)
+    while ($true) {
+        try { $null = Invoke-WebRequest "http://127.0.0.1:8300/healthz" -UseBasicParsing -TimeoutSec 2; break }
+        catch {
+            if ($adminProc.HasExited) { throw "admin API exited early; see $logs\admin.err.log" }
+            if ((Get-Date) -gt $deadline) { throw "admin API did not become ready" }
+            Start-Sleep 1
+        }
+    }
+
     # ---- 5. E2E suite ------------------------------------------------------
     Write-Host "== pytest tests\e2e_authz =="
     $env:E2E_BASE = "http://127.0.0.1:$HttpPort"
+    $env:ADMIN_BASE = "http://127.0.0.1:8300"
     & $python -m pytest (Join-Path $root "tests\e2e_authz") -v
     if ($LASTEXITCODE -ne 0) { throw "E2E tests failed" }
     Write-Host "== ALL GREEN =="
@@ -95,9 +112,10 @@ try {
 finally {
     if (-not $KeepUp) {
         Write-Host "== teardown =="
+        if ($adminProc -and -not $adminProc.HasExited) { Stop-Process -Id $adminProc.Id -Force }
         if ($serverProc -and -not $serverProc.HasExited) { Stop-Process -Id $serverProc.Id -Force }
         if ($fgaProc -and -not $fgaProc.HasExited) { Stop-Process -Id $fgaProc.Id -Force }
     } else {
-        Write-Host "KeepUp: openfga pid $($fgaProc.Id), server pid $($serverProc.Id)"
+        Write-Host "KeepUp: openfga pid $($fgaProc.Id), server pid $($serverProc.Id), admin pid $($adminProc.Id)"
     }
 }

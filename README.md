@@ -41,7 +41,7 @@ py -3.12 -m venv .venv
 powershell -ExecutionPolicy Bypass -File authz\run_e2e.ps1
 ```
 
-Expected output: `Tests 4/4 passing`, then `18 passed`, then `ALL GREEN`.
+Expected output: `Tests 4/4 passing`, then `30 passed`, then `ALL GREEN`.
 
 ### Test it yourself from a front end
 
@@ -147,6 +147,7 @@ enterprise-vibe-fga/
 |   |   `-- tuples.yaml                demo personas and grants
 |   |-- run_e2e.ps1                    one-command end-to-end run
 |   |-- requirements-authz.txt         minimal python deps
+|   |-- admin_api.py                   onboarding/membership API, FGA-checked (:8300)
 |   |-- demo_ui.py                     persona console (standalone front end, :8200)
 |   |-- studio_gateway.py              identity gateway nsflow -> neuro-san (:8210)
 |   |-- install_studio_widget.py       injects the in-studio persona pill bar
@@ -157,7 +158,8 @@ enterprise-vibe-fga/
 |   |-- alpha--public.hocon            published platform-wide
 |   `-- beta--internal.hocon           tenant beta only
 |-- tests/e2e_authz/              NEW
-|   `-- test_tenancy_e2e.py            18 live HTTP assertions vs the running stack
+|   |-- test_tenancy_e2e.py            18 live HTTP assertions vs the running stack
+|   `-- test_admin_api_e2e.py          12 onboarding tests incl. grant->200 / revoke->403
 `-- docs/
     |-- UPSTREAM-README.md        MOVED  original neuro-san-studio README
     `-- images/persona-*.jpg      NEW   the five screenshots above
@@ -189,6 +191,53 @@ AGENT_AUTHORIZER_ALLOW_RELATION=can_invoke
 AGENT_AUTHORIZER_ACTOR_ID_METADATA_KEY=user_id
 FGA_API_URL=...   FGA_STORE_NAME=...   FGA_MODEL_ID=<pinned>   FGA_POLICY_FILE=authz/model/model.json
 ```
+
+## Onboarding and membership: the hybrid write side
+
+Enforcement answers "may X do Y" - the admin API (`authz/admin_api.py`, port 8300) is the
+governed way tuples come into being. It follows a **hybrid membership model**:
+
+- **Steady state - IdP groups.** Team membership lives in your IdP's security groups
+  (Entra ID, Okta, ...). A tenant admin manages their own group in the IdP; the sync
+  service turns group deltas into `group` membership tuples. Joiner, mover, and leaver
+  come free: the IdP disables the account, the tuple follows, access dies. The
+  `/idp/...` endpoints simulate this sync path so the flow is testable standalone.
+- **Exceptions - direct tuples.** Contractors, one-off grants, break-glass: written
+  directly against the tenant, visible individually in every access review.
+
+Every management operation is itself authorized by OpenFGA before it writes - the
+authorization system authorizes its own administration:
+
+| Operation | Endpoint | Caller must pass |
+|---|---|---|
+| Create tenant (born with an admin group) | `POST /tenants` | `super_admin` on the platform |
+| Add / remove member (exception path) | `POST/DELETE /tenants/{t}/members` | `can_administer` on the tenant |
+| Promote / demote admin | `POST/DELETE /tenants/{t}/admins` | `can_administer` on the tenant |
+| Group membership (steady-state path) | `POST/DELETE /idp/groups/{g}/members` | admin of a tenant the group is bound to, or super admin |
+| Access review (recertification sweep) | `GET /tenants/{t}/access-review` | `can_administer` on the tenant |
+
+Two invariants the model cannot express live in this service: a tenant is **created with
+an admin group**, and the **last admin can never be removed** (409). Every write appends
+to a JSONL audit trail (actor, operation, target, outcome) - the stand-in for a
+production transactional outbox. The only tuple the API cannot bootstrap is the first
+super admin: that is the change-controlled pipeline seed, the root of the trust chain.
+
+Try it against the running stack:
+
+```powershell
+# ada (tenant alpha admin) onboards a member via the group path
+irm -Method Post "http://127.0.0.1:8300/idp/groups/alpha-team/members" `
+    -Headers @{user_id="ada"} -ContentType "application/json" -Body '{"user":"frank"}'
+# frank can now invoke alpha--private on the runtime; remove him and he is 403 again
+
+# sam (super admin) creates a tenant; eve gets a clean 403 trying the same
+irm -Method Post "http://127.0.0.1:8300/tenants" -Headers @{user_id="sam"} `
+    -ContentType "application/json" -Body '{"slug":"gamma","admin_group":"g-gamma-admins"}'
+```
+
+The E2E suite (`tests/e2e_authz/test_admin_api_e2e.py`, 12 tests) proves the loop across
+services: an admin API grant flips the runtime from 403 to 200 immediately, a group
+removal revokes it immediately, and the last-admin invariant holds.
 
 ## Hard-won gotchas (each one is asserted by a test)
 
