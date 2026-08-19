@@ -30,6 +30,29 @@ This repo is the authorization layer for that platform, built to be **right from
 beginning** rather than retrofitted: model it once in a decision engine, enforce it at
 every surface (API, studio UI, admin operations), and prove every claim with a test.
 
+## The architecture
+
+![Request lifecycle through authentication and authorization](docs/diagrams/request-lifecycle.png)
+
+One picture, two journeys, one decision engine:
+
+- **Steps 1-4, the read path.** A person clicks in the studio; the SSO gateway strips any
+  self-asserted identity and stamps the verified `user_id`; the runtime asks the decision
+  engine exactly one question per request - `can_invoke?` - and enforces the allow / 403
+  answer.
+- **Steps 5-8, the write path.** A team admin grants through the Admin API, which
+  FGA-checks the caller before any write, while IdP group membership is mirrored into
+  tuples by the sync service - the hybrid membership model.
+- **The core.** OpenFGA holds the authorization model, the relationship tuples, and the
+  decision log. The code chip is a real check from the E2E suite resolving to ALLOW.
+- **The ribbon.** The whole model in one line: `user -member-> tenant -owns->
+  agent_network -published_to-> user:*` (the marketplace), plus per-tenant LLM and BYOM
+  entitlements.
+
+The rest of this README follows the picture: how we got here, the model that powers the
+core, then the read path, then the write path, then how to run and test all of it
+yourself.
+
 ## How we got here (the design journey)
 
 The shape of this repo is a sequence of decisions, each forced by something we verified
@@ -92,6 +115,80 @@ deployment.
 | Time-boxed access | `time_boxed` CEL condition (used on connector grants) |
 
 Model sources: `authz/model/` (modular OpenFGA files under `fga.mod`).
+
+## The read path: how enforcement works (steps 1-4)
+
+The neuro-san runtime checks exactly one relation on one type for every HTTP/MCP request:
+`can_invoke` on `agent_network:<served-name>` (wired through env vars, no fork). Everything
+else - create, publish, LLM approval, BYOM - is checked and written by the platform's own
+services against the same store, so one model answers every "who can do what" question.
+
+| Operation | Enforcement point | FGA interaction |
+|---|---|---|
+| Invoke / chat / connectivity / MCP | neuro-san runtime (built in) | Check `can_invoke` |
+| List networks (concierge, marketplace) | neuro-san runtime (built in) | ListObjects `can_invoke` |
+| Create network in a tenant | publish service | Check `can_create_network`, write `tenant` + `builder` |
+| Publish / unpublish | publish service | Check `can_publish`, write/delete `published_to` |
+| Approve an LLM for a tenant | admin API | Check `can_approve`, write `available_to` |
+| Register a BYOM key | key-registration API | Check `can_use` on `feature:byom` |
+
+Runtime wiring (see `authz/run_e2e.ps1` for the working set):
+
+```
+AGENT_AUTHORIZER=neuro_san.internals.authorization.openfga.open_fga_authorizer.OpenFgaAuthorizer
+AGENT_AUTHORIZER_ACTOR_KEY=user
+AGENT_AUTHORIZER_RESOURCE_KEY=agent_network
+AGENT_AUTHORIZER_ALLOW_RELATION=can_invoke
+AGENT_AUTHORIZER_ACTOR_ID_METADATA_KEY=user_id
+FGA_API_URL=...   FGA_STORE_NAME=...   FGA_MODEL_ID=<pinned>   FGA_POLICY_FILE=authz/model/model.json
+```
+
+## The write path: onboarding and membership (steps 5-8)
+
+Enforcement answers "may X do Y" - the admin API (`authz/admin_api.py`, port 8300) is the
+governed way tuples come into being. It follows a **hybrid membership model**:
+
+- **Steady state - IdP groups.** Team membership lives in your IdP's security groups
+  (Entra ID, Okta, ...). A tenant admin manages their own group in the IdP; the sync
+  service turns group deltas into `group` membership tuples. Joiner, mover, and leaver
+  come free: the IdP disables the account, the tuple follows, access dies. The
+  `/idp/...` endpoints simulate this sync path so the flow is testable standalone.
+- **Exceptions - direct tuples.** Contractors, one-off grants, break-glass: written
+  directly against the tenant, visible individually in every access review.
+
+Every management operation is itself authorized by OpenFGA before it writes - the
+authorization system authorizes its own administration:
+
+| Operation | Endpoint | Caller must pass |
+|---|---|---|
+| Create tenant (born with an admin group) | `POST /tenants` | `super_admin` on the platform |
+| Add / remove member (exception path) | `POST/DELETE /tenants/{t}/members` | `can_administer` on the tenant |
+| Promote / demote admin | `POST/DELETE /tenants/{t}/admins` | `can_administer` on the tenant |
+| Group membership (steady-state path) | `POST/DELETE /idp/groups/{g}/members` | admin of a tenant the group is bound to, or super admin |
+| Access review (recertification sweep) | `GET /tenants/{t}/access-review` | `can_administer` on the tenant |
+
+Two invariants the model cannot express live in this service: a tenant is **created with
+an admin group**, and the **last admin can never be removed** (409). Every write appends
+to a JSONL audit trail (actor, operation, target, outcome) - the stand-in for a
+production transactional outbox. The only tuple the API cannot bootstrap is the first
+super admin: that is the change-controlled pipeline seed, the root of the trust chain.
+
+Try it against the running stack:
+
+```powershell
+# ada (tenant alpha admin) onboards a member via the group path
+irm -Method Post "http://127.0.0.1:8300/idp/groups/alpha-team/members" `
+    -Headers @{user_id="ada"} -ContentType "application/json" -Body '{"user":"frank"}'
+# frank can now invoke alpha--private on the runtime; remove him and he is 403 again
+
+# sam (super admin) creates a tenant; eve gets a clean 403 trying the same
+irm -Method Post "http://127.0.0.1:8300/tenants" -Headers @{user_id="sam"} `
+    -ContentType "application/json" -Body '{"slug":"gamma","admin_group":"g-gamma-admins"}'
+```
+
+The E2E suite (`tests/e2e_authz/test_admin_api_e2e.py`, 12 tests) proves the loop across
+services: an admin API grant flips the runtime from 403 to 200 immediately, a group
+removal revokes it immediately, and the last-admin invariant holds.
 
 ## Quick start (Windows)
 
@@ -228,80 +325,6 @@ enterprise-vibe-fga/
     |-- UPSTREAM-README.md        MOVED  original neuro-san-studio README
     `-- images/persona-*.jpg      NEW   the five screenshots above
 ```
-
-## How enforcement works
-
-The neuro-san runtime checks exactly one relation on one type for every HTTP/MCP request:
-`can_invoke` on `agent_network:<served-name>` (wired through env vars, no fork). Everything
-else - create, publish, LLM approval, BYOM - is checked and written by the platform's own
-services against the same store, so one model answers every "who can do what" question.
-
-| Operation | Enforcement point | FGA interaction |
-|---|---|---|
-| Invoke / chat / connectivity / MCP | neuro-san runtime (built in) | Check `can_invoke` |
-| List networks (concierge, marketplace) | neuro-san runtime (built in) | ListObjects `can_invoke` |
-| Create network in a tenant | publish service | Check `can_create_network`, write `tenant` + `builder` |
-| Publish / unpublish | publish service | Check `can_publish`, write/delete `published_to` |
-| Approve an LLM for a tenant | admin API | Check `can_approve`, write `available_to` |
-| Register a BYOM key | key-registration API | Check `can_use` on `feature:byom` |
-
-Runtime wiring (see `authz/run_e2e.ps1` for the working set):
-
-```
-AGENT_AUTHORIZER=neuro_san.internals.authorization.openfga.open_fga_authorizer.OpenFgaAuthorizer
-AGENT_AUTHORIZER_ACTOR_KEY=user
-AGENT_AUTHORIZER_RESOURCE_KEY=agent_network
-AGENT_AUTHORIZER_ALLOW_RELATION=can_invoke
-AGENT_AUTHORIZER_ACTOR_ID_METADATA_KEY=user_id
-FGA_API_URL=...   FGA_STORE_NAME=...   FGA_MODEL_ID=<pinned>   FGA_POLICY_FILE=authz/model/model.json
-```
-
-## Onboarding and membership: the hybrid write side
-
-Enforcement answers "may X do Y" - the admin API (`authz/admin_api.py`, port 8300) is the
-governed way tuples come into being. It follows a **hybrid membership model**:
-
-- **Steady state - IdP groups.** Team membership lives in your IdP's security groups
-  (Entra ID, Okta, ...). A tenant admin manages their own group in the IdP; the sync
-  service turns group deltas into `group` membership tuples. Joiner, mover, and leaver
-  come free: the IdP disables the account, the tuple follows, access dies. The
-  `/idp/...` endpoints simulate this sync path so the flow is testable standalone.
-- **Exceptions - direct tuples.** Contractors, one-off grants, break-glass: written
-  directly against the tenant, visible individually in every access review.
-
-Every management operation is itself authorized by OpenFGA before it writes - the
-authorization system authorizes its own administration:
-
-| Operation | Endpoint | Caller must pass |
-|---|---|---|
-| Create tenant (born with an admin group) | `POST /tenants` | `super_admin` on the platform |
-| Add / remove member (exception path) | `POST/DELETE /tenants/{t}/members` | `can_administer` on the tenant |
-| Promote / demote admin | `POST/DELETE /tenants/{t}/admins` | `can_administer` on the tenant |
-| Group membership (steady-state path) | `POST/DELETE /idp/groups/{g}/members` | admin of a tenant the group is bound to, or super admin |
-| Access review (recertification sweep) | `GET /tenants/{t}/access-review` | `can_administer` on the tenant |
-
-Two invariants the model cannot express live in this service: a tenant is **created with
-an admin group**, and the **last admin can never be removed** (409). Every write appends
-to a JSONL audit trail (actor, operation, target, outcome) - the stand-in for a
-production transactional outbox. The only tuple the API cannot bootstrap is the first
-super admin: that is the change-controlled pipeline seed, the root of the trust chain.
-
-Try it against the running stack:
-
-```powershell
-# ada (tenant alpha admin) onboards a member via the group path
-irm -Method Post "http://127.0.0.1:8300/idp/groups/alpha-team/members" `
-    -Headers @{user_id="ada"} -ContentType "application/json" -Body '{"user":"frank"}'
-# frank can now invoke alpha--private on the runtime; remove him and he is 403 again
-
-# sam (super admin) creates a tenant; eve gets a clean 403 trying the same
-irm -Method Post "http://127.0.0.1:8300/tenants" -Headers @{user_id="sam"} `
-    -ContentType "application/json" -Body '{"slug":"gamma","admin_group":"g-gamma-admins"}'
-```
-
-The E2E suite (`tests/e2e_authz/test_admin_api_e2e.py`, 12 tests) proves the loop across
-services: an admin API grant flips the runtime from 403 to 200 immediately, a group
-removal revokes it immediately, and the last-admin invariant holds.
 
 ## Hard-won gotchas (each one is asserted by a test)
 
