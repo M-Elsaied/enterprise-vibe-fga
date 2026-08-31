@@ -1,0 +1,36 @@
+module core
+
+type user
+
+# Mirrors one IdP (e.g. Entra) security group. Membership tuples are written
+# only by the identity sync service - never by hand. In contextual (Option B)
+# mode no group tuples are persisted at all; the type restriction still permits
+# them, which is what lets both modes share one model.
+type group
+  relations
+    define member: [user, group#member]
+
+# Singleton object, e.g. platform:main. Super admins are the core platform team
+# and span every tenant (tenants compute super_admin from here).
+type platform
+  relations
+    define super_admin: [user, group#member]
+
+# One tenant per team. Isolation is structural: a check succeeds only if a
+# tuple path exists, so members of tenant A have no path to tenant B's objects.
+# The studio role ladder (admin > developer > analyst) lives here; `member` is
+# the marketplace-profile general role and is kept for that profile.
+type tenant
+  relations
+    define platform: [platform]
+    define admin: [user, group#member]
+    define developer: [user, group#member]
+    define analyst: [user, group#member]
+    define member: [user, group#member] or admin
+    define super_admin: super_admin from platform
+    define can_administer: admin or super_admin
+    # creating a network or tool is a tenant-scoped question ("create WHAT, WHERE"),
+    # so the create verb of the ladder matrix is checked here, not on a not-yet-
+    # existing resource object: analyst excluded.
+    define can_create_resources: admin or developer or super_admin
+    define can_create_network: member or super_admin

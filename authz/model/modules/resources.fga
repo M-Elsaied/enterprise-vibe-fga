@@ -1,0 +1,37 @@
+module resources
+
+# Studio resource types with the four-role ladder verbs. This module NEVER
+# references relations from optional modules (marketplace/connectors/
+# entitlements) so the core manifest compiles without them.
+#
+# Ladder matrix (per tenant):
+#   super_admin  create+read+update+delete+execute  + special access
+#   admin        create+read+update+delete+execute  + special access
+#   developer    create+read+update+execute (no delete) + special access
+#   analyst      read+execute only, no special access
+# The object id of an agent_network MUST equal the served network name
+# (the .hocon filename stem).
+
+type agent_network
+  relations
+    define tenant: [tenant]
+    define can_read: super_admin from tenant or admin from tenant or developer from tenant or analyst from tenant
+    define can_update: super_admin from tenant or admin from tenant or developer from tenant
+    define can_delete: super_admin from tenant or admin from tenant
+    define can_execute: super_admin from tenant or admin from tenant or developer from tenant or analyst from tenant
+
+# A callable tool exposed to agents: CRUD, no execute verb.
+type tool
+  relations
+    define tenant: [tenant]
+    define can_read: super_admin from tenant or admin from tenant or developer from tenant or analyst from tenant
+    define can_update: super_admin from tenant or admin from tenant or developer from tenant
+    define can_delete: super_admin from tenant or admin from tenant
+
+# The privileged built-in agents (designer, editor, instruction editor).
+# A DISTINCT type - never folded into agent_network - so a provisioning
+# write under the wrong type cannot silently satisfy checks. Analyst excluded.
+type special_agent
+  relations
+    define tenant: [tenant]
+    define can_access: super_admin from tenant or admin from tenant or developer from tenant

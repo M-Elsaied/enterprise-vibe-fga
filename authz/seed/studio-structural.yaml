@@ -1,0 +1,10 @@
+# Studio-profile E2E structural graph (Option B persists ONLY this).
+# Role tuples never appear here - the enforcement library injects them
+# per request as contextual tuples from IdP group headers.
+- {user: "platform:main", relation: platform, object: "tenant:alpha"}
+- {user: "platform:main", relation: platform, object: "tenant:beta"}
+- {user: "tenant:alpha", relation: tenant, object: "agent_network:alpha--net"}
+- {user: "tenant:beta",  relation: tenant, object: "agent_network:beta--net"}
+- {user: "tenant:alpha", relation: tenant, object: "tool:alpha-tool"}
+- {user: "tenant:alpha", relation: tenant, object: "special_agent:agent_network_designer"}
+- {user: "tenant:beta",  relation: tenant, object: "special_agent:agent_network_designer"}

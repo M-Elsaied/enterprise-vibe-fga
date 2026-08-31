@@ -114,7 +114,37 @@ deployment.
 | BYOM with own API key | `feature:byom` entitlement; the key itself lives in the secret store |
 | Time-boxed access | `time_boxed` CEL condition (used on connector grants) |
 
-Model sources: `authz/model/` (modular OpenFGA files under `fga.mod`).
+Model sources: `authz/model/modules/` (modular OpenFGA files).
+
+## Profiles
+
+One set of model modules, two deployment profiles built from two manifests:
+
+| | **Studio profile** | **Full profile** |
+|---|---|---|
+| Manifest | `authz/model/core.fga.mod` | `authz/model/full.fga.mod` |
+| Modules | core + resources | core + resources + marketplace + connectors + entitlements |
+| Role model | Four-role ladder per tenant: super_admin (platform-wide) / admin / developer / analyst | Ladder + member, per-object builder/editor, marketplace sharing |
+| Resource types | agent_network (read/update/delete/execute), tool (CRUD), special_agent (access; analyst excluded) | + published_to, connectors, llm_model/feature entitlements |
+| Create verb | Tenant-scoped: `can_create_resources` on the tenant ("create WHAT, WHERE") | `can_create_network` on the tenant |
+| Role delivery | **Option B default**: IdP groups -> per-request contextual tuples, nothing about users persisted | Persisted membership tuples via the admin API |
+| Runtime relation | `AGENT_AUTHORIZER_ALLOW_RELATION=can_execute` | `AGENT_AUTHORIZER_ALLOW_RELATION=can_invoke` |
+| Enforcement code | `authz/enforcement/` (middleware -> group mapper -> contextual tuples -> Check/ListObjects) | neuro-san runtime + admin API |
+
+The same relations accept `[user, group#member]`, so a studio deployment can
+later switch from contextual to persisted membership - or adopt the optional
+modules - with **zero model change**: build from the fuller manifest and start
+writing tuples.
+
+**Group naming convention is the role mapping** (studio profile): one IdP group
+per team x role - `NSAN-<TEAM>-ADMINS/-DEVELOPERS/-ANALYSTS` plus a global
+`NSAN-SUPERADMINS`. Onboarding a team = create its tenant tuple and its three
+groups; no code or config changes.
+
+**Front-end persona testing** is gated by `OPENFGA_DEV_IDENTITY=enabled`
+(dev builds only): `X-Dev-User`/`X-Dev-Groups` headers substitute the proxy
+identity for persona switching; when unset (the default) those headers are
+ignored - one env var separates test and production.
 
 ## The read path: how enforcement works (steps 1-4)
 
@@ -202,7 +232,7 @@ py -3.12 -m venv .venv
 powershell -ExecutionPolicy Bypass -File authz\run_e2e.ps1
 ```
 
-Expected output: `Tests 4/4 passing`, then `30 passed`, then `ALL GREEN`.
+Expected output: `Tests 4/4 passing`, then `47 passed`, then `ALL GREEN`.
 
 ### Test it yourself from a front end
 
@@ -297,13 +327,15 @@ enterprise-vibe-fga/
 |-- .gitignore                    MOD  ignores tools/, .e2e-logs/, generated model.json
 |-- authz/                        NEW  the authorization layer
 |   |-- model/
-|   |   |-- fga.mod                    modular model manifest
-|   |   |-- core.fga                   user / group / platform / tenant
-|   |   |-- agents.fga                 agent_network + marketplace publish
-|   |   |-- connectors.fga             connector + time_boxed condition
-|   |   `-- entitlements.fga           llm_model + feature (BYOM)
+|   |   |-- core.fga.mod               STUDIO profile manifest (core + resources)
+|   |   |-- full.fga.mod               FULL profile manifest (all modules)
+|   |   `-- modules/                   core / resources / marketplace / connectors / entitlements
+|   |-- enforcement/                   studio-profile library: middleware, group mapper,
+|   |                                  contextual tuples (Option B), client, provisioner
 |   |-- tests/
-|   |   `-- tenancy.fga.yaml           fga model test suite (grants AND denials)
+|   |   |-- tenancy.fga.yaml           full-profile suite (grants AND denials)
+|   |   |-- studio-persisted.fga.yaml  4-role ladder matrix, persisted mode
+|   |   `-- studio-contextual.fga.yaml same matrix, Option B contextual mode
 |   |-- seed/
 |   |   `-- tuples.yaml                demo personas and grants
 |   |-- run_e2e.ps1                    one-command end-to-end run

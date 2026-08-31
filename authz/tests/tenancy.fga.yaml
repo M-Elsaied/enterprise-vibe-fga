@@ -1,5 +1,5 @@
 name: vibe-tenancy
-model_file: ../model/fga.mod
+model_file: ../model/full.fga.mod
 tuples:
   # platform + super admin (core team)
   - {user: "user:sam", relation: member, object: "group:core"}
@@ -45,7 +45,9 @@ tests:
     check:
       - user: user:alice
         object: agent_network:alpha--private
-        assertions: {can_invoke: true, can_edit: true, can_publish: false, can_delete: true}
+        # can_delete tightened in the studio-rbac restructure: deletion is
+        # admin/super_admin only (ladder matrix); builders edit but don't delete.
+        assertions: {can_invoke: true, can_edit: true, can_publish: false, can_delete: false}
       - user: user:ada
         object: agent_network:alpha--private
         assertions: {can_invoke: true, can_publish: true, can_delete: true}

@@ -49,12 +49,22 @@ try {
     Write-Host "== seeding store, model, tuples =="
     $sid = (& $fga store create --name vibe-e2e | ConvertFrom-Json).store.id
     Push-Location (Join-Path $root "authz\model")
-    $mid = (& $fga model write --store-id $sid --file fga.mod | ConvertFrom-Json).authorization_model_id
+    $mid = (& $fga model write --store-id $sid --file full.fga.mod --format modular | ConvertFrom-Json).authorization_model_id
     & $fga model get --store-id $sid --format json | Out-File -Encoding ascii "model.json"
     Pop-Location
     $writeResult = & $fga tuple write --store-id $sid --file (Join-Path $root "authz\seed\tuples.yaml") | ConvertFrom-Json
     if ($writeResult.failed.Count -gt 0) { throw "tuple seeding had failures" }
     Write-Host "store=$sid model=$mid tuples=$($writeResult.successful.Count)"
+
+    # ---- 3b. studio-profile store (core manifest, Option B: structure only) --
+    Write-Host "== seeding studio-profile store =="
+    $ssid = (& $fga store create --name studio-e2e | ConvertFrom-Json).store.id
+    Push-Location (Join-Path $root "authz\model")
+    $smid = (& $fga model write --store-id $ssid --file core.fga.mod --format modular | ConvertFrom-Json).authorization_model_id
+    Pop-Location
+    $sw = & $fga tuple write --store-id $ssid --file (Join-Path $root "authz\seed\studio-structural.yaml") | ConvertFrom-Json
+    if ($sw.failed.Count -gt 0) { throw "studio structural seeding had failures" }
+    Write-Host "studio store=$ssid model=$smid"
 
     # ---- 4. neuro-san server ----------------------------------------------
     Write-Host "== starting neuro-san server =="
@@ -105,6 +115,8 @@ try {
     Write-Host "== pytest tests\e2e_authz =="
     $env:E2E_BASE = "http://127.0.0.1:$HttpPort"
     $env:ADMIN_BASE = "http://127.0.0.1:8300"
+    $env:STUDIO_STORE_ID = $ssid
+    $env:STUDIO_MODEL_ID = $smid
     & $python -m pytest (Join-Path $root "tests\e2e_authz") -v
     if ($LASTEXITCODE -ne 0) { throw "E2E tests failed" }
     Write-Host "== ALL GREEN =="

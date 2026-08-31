@@ -1,6 +1,25 @@
 # The authorization layer
 
-This directory holds the OpenFGA model, its tests, the demo seed state, and the E2E runner.
+This directory holds the OpenFGA model (modular, two manifests - see the root README's
+"Profiles" section), its tests, the demo seed state, the E2E runner, and the
+`enforcement/` library for the studio profile (Entra-style header identity -> group
+naming convention -> per-request contextual tuples -> Check/ListObjects; provisioning
+routed through the same `resource_map` as checking, so an object can never be written
+under one type and checked under another).
+
+Model commands (the `--format modular` flag matters - manifest names must end in
+`fga.mod` and module paths may not use `..`):
+
+```powershell
+cd authz\model
+..\..\tools\fga.exe model validate --file core.fga.mod --format modular
+..\..\tools\fga.exe model validate --file full.fga.mod --format modular
+cd ..\tests
+..\..\tools\fga.exe model test --tests studio-persisted.fga.yaml
+..\..\tools\fga.exe model test --tests studio-contextual.fga.yaml   # Option B: per-test
+                                    # tuples are sent as CONTEXTUAL tuples by the CLI
+..\..\tools\fga.exe model test --tests tenancy.fga.yaml
+```
 
 ## Getting the binaries (one time)
 
