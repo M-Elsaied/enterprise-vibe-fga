@@ -32,7 +32,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 TARGET = os.environ.get("E2E_BASE", "http://127.0.0.1:8123")
 PORT = int(os.environ.get("GATEWAY_PORT", "8210"))
-PERSONAS = ["sam", "ada", "alice", "bob", "eve"]
+# Comma-separated override, e.g. "adam,dina,ana,bob,mia,sam,eve" for the
+# studio-profile persona set; default = the full-profile marketplace personas.
+PERSONAS = [p.strip() for p in os.environ.get(
+    "GATEWAY_PERSONAS", "sam,ada,alice,bob,eve").split(",") if p.strip()]
 
 _state = {"persona": "alice"}
 _lock = threading.Lock()

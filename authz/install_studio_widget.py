@@ -15,18 +15,37 @@ Usage:
 """
 
 import argparse
+import json
+import os
 import sys
 from pathlib import Path
 
 MARKER = "<!-- vibe-fga-persona-widget -->"
 
+# Override via STUDIO_WIDGET_PERSONAS, format "name|description;name|description".
+DEFAULT_PERSONAS = [["sam", "platform super admin"], ["ada", "tenant alpha admin"],
+                    ["alice", "alpha member, builder"], ["bob", "beta member"],
+                    ["eve", "stranger, zero grants"]]
+
+
+def personas() -> list:
+    raw = os.environ.get("STUDIO_WIDGET_PERSONAS", "")
+    if not raw.strip():
+        return DEFAULT_PERSONAS
+    result = []
+    for entry in raw.split(";"):
+        entry = entry.strip()
+        if not entry:
+            continue
+        name, _, desc = entry.partition("|")
+        result.append([name.strip(), desc.strip() or name.strip()])
+    return result or DEFAULT_PERSONAS
+
 WIDGET = MARKER + """
 <script>
 (function () {
   var GW = "http://127.0.0.1:8210";
-  var PERSONAS = [["sam", "platform super admin"], ["ada", "tenant alpha admin"],
-                  ["alice", "alpha member, builder"], ["bob", "beta member"],
-                  ["eve", "stranger, zero grants"]];
+  var PERSONAS = __PERSONAS__;
   function mount() {
     var box = document.createElement("div");
     box.style.cssText = "position:fixed;bottom:14px;right:14px;z-index:99999;" +
@@ -98,8 +117,9 @@ def main() -> None:
         return
     if "</body>" not in html:
         sys.exit("No </body> tag found; nsflow layout changed - update this script.")
-    index.write_text(html.replace("</body>", WIDGET + "</body>"), encoding="utf-8")
-    print(f"Widget installed into {index}")
+    widget = WIDGET.replace("__PERSONAS__", json.dumps(personas()))
+    index.write_text(html.replace("</body>", widget + "</body>"), encoding="utf-8")
+    print(f"Widget installed into {index} with {len(personas())} personas")
 
 
 if __name__ == "__main__":
