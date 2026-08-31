@@ -74,13 +74,21 @@ def test_super_admin_spans_all_tenants():
     assert c.check_create("sam", "beta", roles)
 
 
+MIA_READ = ["alpha--net", "alpha--private", "alpha--public", "alpha--reports",
+            "alpha--support", "beta--internal", "beta--net", "beta--pipeline"]
+MIA_UPDATE = ["alpha--net", "alpha--private", "alpha--public", "alpha--reports",
+              "alpha--support"]
+
+
 def test_multi_team_user_and_listing():
     c = client()
     roles = roles_for("NSAN-ALPHA-DEVELOPERS", "NSAN-BETA-ANALYSTS")
     assert c.check("mia", "update", "alpha--net", roles)
     assert not c.check("mia", "update", "beta--net", roles)
-    assert c.list_ids("mia", "read", "agent_network", roles) == ["alpha--net", "beta--net"]
-    assert c.list_ids("mia", "update", "agent_network", roles) == ["alpha--net"]
+    # developer across all of alpha, analyst (read-only) across all of beta,
+    # and nothing from gamma/delta where mia holds no role
+    assert c.list_ids("mia", "read", "agent_network", roles) == MIA_READ
+    assert c.list_ids("mia", "update", "agent_network", roles) == MIA_UPDATE
 
 
 def test_no_roles_sees_nothing():

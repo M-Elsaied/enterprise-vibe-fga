@@ -1,0 +1,20 @@
+{
+    "llm_config": {
+        "model_name": "gpt-4o"
+    },
+    "metadata": {
+        "description": "Team Alpha's weekly reporting assistant.",
+        "tags": ["tenancy-demo"]
+    },
+    "tools": [
+        {
+            "name": "alpha_reports_assistant",
+            "function": {
+                "description": "Summarizes team Alpha's weekly metrics into reports."
+            },
+            "instructions": """
+You are team Alpha's reporting assistant. Answer briefly.
+"""
+        }
+    ]
+}

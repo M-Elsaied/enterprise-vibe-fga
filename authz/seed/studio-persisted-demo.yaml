@@ -1,17 +1,17 @@
-# PERSISTED-mode demo seed for the studio profile: the same model that runs
+# PERSISTED-mode demo roles for the studio profile: the same model that runs
 # Option B contextual tuples also accepts stored role tuples - this file is
 # that other mode, used to demo the ladder through the stock neuro-san runtime
-# (which checks can_execute with no contextual tuples).
+# (which checks can_execute with no contextual tuples). Structural parents
+# live in studio-structural.yaml; this file is ROLES ONLY.
 # Personas: adam admin@alpha, dina developer@alpha, ana analyst@alpha,
-#           bob developer@beta, mia developer@alpha+analyst@beta, sam super.
+#           bob developer@beta, gil developer@gamma, dora admin@delta,
+#           mia developer@alpha + analyst@beta, sam super admin.
 - {user: "user:adam", relation: admin, object: "tenant:alpha"}
 - {user: "user:dina", relation: developer, object: "tenant:alpha"}
 - {user: "user:ana", relation: analyst, object: "tenant:alpha"}
 - {user: "user:bob", relation: developer, object: "tenant:beta"}
+- {user: "user:gil", relation: developer, object: "tenant:gamma"}
+- {user: "user:dora", relation: admin, object: "tenant:delta"}
 - {user: "user:mia", relation: developer, object: "tenant:alpha"}
 - {user: "user:mia", relation: analyst, object: "tenant:beta"}
 - {user: "user:sam", relation: super_admin, object: "platform:main"}
-# parents for the networks the demo runtime actually serves (registries/vibe)
-- {user: "tenant:alpha", relation: tenant, object: "agent_network:alpha--private"}
-- {user: "tenant:alpha", relation: tenant, object: "agent_network:alpha--public"}
-- {user: "tenant:beta",  relation: tenant, object: "agent_network:beta--internal"}

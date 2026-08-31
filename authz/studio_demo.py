@@ -93,7 +93,7 @@ def overview(request: Request):
         "special_access": c.check(identity.user_id, "access",
                                   "agent_network_designer", roles),
         "create": {t: c.check_create(identity.user_id, t, roles)
-                   for t in ("alpha", "beta")},
+                   for t in ("alpha", "beta", "gamma", "delta")},
     }
 
 
@@ -125,14 +125,16 @@ The <b>prod mode</b> persona proves the dev flag is the only door.</div>
 <pre id="raw"></pre>
 <script>
 const PERSONAS = [
- ["alpha-admin",  "Alpha Admin",      "NSAN-ALPHA-ADMINS"],
- ["alpha-dev",    "Alpha Developer",  "NSAN-ALPHA-DEVELOPERS"],
- ["alpha-analyst","Alpha Analyst",    "NSAN-ALPHA-ANALYSTS"],
- ["beta-dev",     "Beta Developer",   "NSAN-BETA-DEVELOPERS"],
- ["mia",          "Multi-team",       "NSAN-ALPHA-DEVELOPERS,NSAN-BETA-ANALYSTS"],
- ["sam",          "Super Admin",      "NSAN-SUPERADMINS"],
- ["eve",          "Stranger",         ""],
- [null,           "prod mode",        ""],
+ ["adam", "Alpha Admin",      "NSAN-ALPHA-ADMINS"],
+ ["dina", "Alpha Developer",  "NSAN-ALPHA-DEVELOPERS"],
+ ["ana",  "Alpha Analyst",    "NSAN-ALPHA-ANALYSTS"],
+ ["bob",  "Beta Developer",   "NSAN-BETA-DEVELOPERS"],
+ ["gil",  "Gamma Developer",  "NSAN-GAMMA-DEVELOPERS"],
+ ["dora", "Delta Admin",      "NSAN-DELTA-ADMINS"],
+ ["mia",  "Multi-team",       "NSAN-ALPHA-DEVELOPERS,NSAN-BETA-ANALYSTS"],
+ ["sam",  "Super Admin",      "NSAN-SUPERADMINS"],
+ ["eve",  "Stranger",         ""],
+ [null,   "prod mode",        ""],
 ];
 let current = "alpha-dev";
 function chips(o, keys) {
