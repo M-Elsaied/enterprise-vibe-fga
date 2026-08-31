@@ -355,47 +355,6 @@ hardcodes chat identity to the backend's `USER` env var, so identity must be ass
 the hop the runtime trusts - the same place an SSO layer would assert it in any deployment
 (`browser -> nsflow -> gateway -> neuro-san -> OpenFGA`).
 
-## The personas, visualized (full profile)
-
-Same studio, same server, same model - the only thing that changes between these five
-screenshots is the identity on the wire. The persona pill bar (bottom-right) switches it;
-the Available Agents sidebar is the enforcement result.
-
-### sam - platform super admin
-
-Sees all three networks. `super_admin` on `platform:vibe` inherits through every tenant.
-
-![sam sees every network](docs/images/persona-sam.jpg)
-
-### ada - tenant alpha admin
-
-Sees `alpha--private` and `alpha--public`. Admin of tenant alpha via her IdP group
-binding; no path to tenant beta's objects.
-
-![ada sees alpha's networks](docs/images/persona-ada.jpg)
-
-### alice - alpha member and builder
-
-Same visibility as ada (member of tenant alpha), but fewer rights on them: she can edit
-what she built, and cannot publish or administer.
-
-![alice sees alpha's networks](docs/images/persona-alice.jpg)
-
-### bob - beta member
-
-The mirror image: `beta--internal` plus `alpha--public`. He sees alpha's published network
-because of the single marketplace tuple `user:* published_to agent_network:alpha--public`,
-and nothing else of alpha's.
-
-![bob sees beta's network plus the published one](docs/images/persona-bob.jpg)
-
-### eve - authenticated stranger, zero grants
-
-Only the marketplace-published network survives. Everything else is invisible AND returns
-403 if probed directly.
-
-![eve sees only the published network](docs/images/persona-eve.jpg)
-
 ## What this change adds (file tree)
 
 Everything below is introduced by this repo; every file not shown is the unmodified
