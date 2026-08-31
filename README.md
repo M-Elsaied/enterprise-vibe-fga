@@ -34,23 +34,25 @@ every surface (API, studio UI, admin operations), and prove every claim with a t
 
 ![Request lifecycle through authentication and authorization](docs/diagrams/request-lifecycle.png)
 
-One picture, two journeys, one decision engine:
+One picture, two journeys, one decision engine *(updated for the studio-rbac profile)*:
 
-- **Steps 1-4, the read path.** A person clicks in the studio; the SSO gateway strips any
-  self-asserted identity and stamps the verified `user_id`; the runtime asks the decision
-  engine exactly one question per request - `can_invoke?` - and enforces the allow / 403
-  answer.
-- **Steps 5-8, the write path.** A team admin grants through the Admin API, which
-  FGA-checks the caller before any write, while IdP group membership is mirrored into
-  tuples by the sync service - the hybrid membership model.
-- **The core.** OpenFGA holds the authorization model, the relationship tuples, and the
-  decision log. The code chip is a real check from the E2E suite resolving to ALLOW.
-- **The ribbon.** The whole model in one line: `user -member-> tenant -owns->
-  agent_network -published_to-> user:*` (the marketplace), plus per-tenant LLM and BYOM
-  entitlements.
+- **Steps 1-4, the read path.** A person clicks in the studio; the SSO layer forwards the
+  verified `user_id` **and group claims** as trusted headers; the runtime asks the
+  decision engine one question per request - `can_execute?` - and enforces the
+  allow / 403 answer.
+- **Steps 5-8, the grant path (Option B).** No role is ever written: IdP groups are the
+  source of truth, the group mapper turns `NSAN-<TEAM>-<ROLE>` names into per-tenant
+  roles, and the context builder sends them as contextual tuples that ride each check.
+  The provisioner persists only the structural graph - tenant and resource parents.
+- **The core.** OpenFGA holds the authorization model, the persisted structure, and the
+  decision log. The code chip is a real studio-profile check - note the contextual tuple
+  riding it - resolving to ALLOW.
+- **The ribbon.** The role ladder in one line: `user -member of-> NSAN group -maps to->
+  tenant role -grants-> network verbs`, with `super_admin` computed once at the platform
+  and spanning every tenant.
 
 The rest of this README follows the picture: how we got here, the model that powers the
-core, then the read path, then the write path, then how to run and test all of it
+core, the profiles, the roles and their proof, then how to run and test all of it
 yourself.
 
 ## How we got here (the design journey)
@@ -135,6 +137,84 @@ The same relations accept `[user, group#member]`, so a studio deployment can
 later switch from contextual to persisted membership - or adopt the optional
 modules - with **zero model change**: build from the fuller manifest and start
 writing tuples.
+
+## The studio profile: the roles first
+
+Four roles, one ladder, scoped per tenant (a tenant = a team). `super_admin` is granted
+once at the platform and spans every tenant; the other three are held per tenant, so one
+person can be a developer in one team and an analyst in another at the same time.
+
+| Role | create | read | update | delete | execute | special agents |
+|---|---|---|---|---|---|---|
+| **super_admin** (platform-wide) | yes | yes | yes | yes | yes | yes |
+| **admin** (per tenant) | yes | yes | yes | yes | yes | yes |
+| **developer** (per tenant) | yes | yes | yes | - | yes | yes |
+| **analyst** (per tenant) | - | yes | - | - | yes | - |
+
+Reading the matrix: *execute* means running an agent network - analysts can use
+everything their team serves but change nothing; *delete* is reserved for admins;
+*special agents* are the three privileged built-ins (network designer, editor,
+instruction editor), a distinct model type so analysts are excluded structurally;
+*create* is a tenant-scoped question ("create WHAT, WHERE") checked on the team, not on
+a not-yet-existing object.
+
+**Where roles come from.** Nothing about users is stored in the authorization engine
+(Option B). Identity and group claims arrive as trusted forwarded headers from the SSO
+layer on every request; the group **naming convention is the mapping**
+(`NSAN-<TEAM>-<ROLE>` plus a global `NSAN-SUPERADMINS`); the enforcement library flattens
+the caller's groups into per-request contextual tuples. Onboarding a new team is a tenant
+tuple plus three IdP groups - zero code. Three open stitching notes, stated honestly:
+header trust and stripping are the upstream proxy's job; Entra emits group GUIDs by
+default so the claim must be configured to carry names (or the mapper given a GUID map);
+and the stock runtime path consumes only `user_id` (persisted-mode roles) until the small
+contextual-authorizer extension is added.
+
+## The proof: the studio, per persona
+
+Same studio, same server, same model - only the identity changes. The persona bar
+(bottom-right) switches identities; its **details** button maximizes into a live preview
+panel showing any persona's roles and full verb matrix (the same data as the persona
+console below) before you switch. Persona testing rides the `OPENFGA_DEV_IDENTITY` flag:
+unset it and every spoofed identity collapses to anonymous - that is the production
+posture.
+
+### dina - developer in team alpha
+
+Sees alpha's four networks, and only alpha's. Update yes, delete no.
+
+![dina sees alpha's networks](docs/images/studio-persona-dina.png)
+
+### bob - developer in team beta
+
+The mirror image: beta's two networks, nothing of alpha's - isolation is structural.
+
+![bob sees beta's networks](docs/images/studio-persona-bob.png)
+
+### gil - developer in team gamma
+
+A team onboarded with zero code: one tenant tuple + three IdP groups.
+
+![gil sees gamma's networks](docs/images/studio-persona-gil.png)
+
+### sam - platform super admin
+
+One platform-level grant, all nine networks across all four teams.
+
+![sam sees every network](docs/images/studio-persona-sam.png)
+
+### eve - authenticated, zero mapped groups
+
+An empty studio: no roles, no networks, structurally nothing to see.
+
+![eve sees nothing](docs/images/studio-persona-eve.png)
+
+### The verb matrix, live
+
+The persona console renders the full ladder per persona - every network and tool with
+green/red verb chips, special-agent access, and create rights per team - driven by the
+same enforcement library the studio backend uses:
+
+![the persona console verb matrix](docs/images/studio-console.png)
 
 **Group naming convention is the role mapping** (studio profile): one IdP group
 per team x role - `NSAN-<TEAM>-ADMINS/-DEVELOPERS/-ANALYSTS` plus a global
@@ -275,7 +355,7 @@ hardcodes chat identity to the backend's `USER` env var, so identity must be ass
 the hop the runtime trusts - the same place an SSO layer would assert it in any deployment
 (`browser -> nsflow -> gateway -> neuro-san -> OpenFGA`).
 
-## The personas, visualized
+## The personas, visualized (full profile)
 
 Same studio, same server, same model - the only thing that changes between these five
 screenshots is the identity on the wire. The persona pill bar (bottom-right) switches it;

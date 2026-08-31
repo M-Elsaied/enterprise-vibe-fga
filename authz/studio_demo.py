@@ -136,7 +136,7 @@ const PERSONAS = [
  ["eve",  "Stranger",         ""],
  [null,   "prod mode",        ""],
 ];
-let current = "alpha-dev";
+let current = "dina";
 function chips(o, keys) {
   return keys.map(k => `<span class="chip ${o[k] ? "ok" : "no"}">${k}</span>`).join("");
 }
