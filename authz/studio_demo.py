@@ -18,6 +18,7 @@ import sys
 import requests as rq
 import uvicorn
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -31,6 +32,11 @@ STORE_NAME = os.environ.get("STUDIO_STORE_NAME", "studio-e2e")
 
 app = FastAPI(title="Studio RBAC persona console")
 app.add_middleware(IdentityMiddleware)
+# CORS so the in-studio widget (served from the nsflow origin) can preview
+# personas through this console's API. Dev tool only - it runs with the
+# dev-identity flag and never in production.
+app.add_middleware(CORSMiddleware, allow_origins=["*"],
+                   allow_methods=["*"], allow_headers=["*"])
 STATE = {"store_id": None, "model_id": None}
 
 
