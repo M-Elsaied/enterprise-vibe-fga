@@ -394,7 +394,7 @@ enterprise-vibe-fga/
 |   `-- test_admin_api_e2e.py          12 onboarding tests incl. grant->200 / revoke->403
 `-- docs/
     |-- UPSTREAM-README.md        MOVED  original neuro-san-studio README
-    `-- images/persona-*.jpg      NEW   the five screenshots above
+    `-- images/studio-*.png       NEW   the studio-profile screenshots above
 ```
 
 ## Hard-won gotchas (each one is asserted by a test)
