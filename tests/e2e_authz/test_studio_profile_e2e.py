@@ -74,10 +74,11 @@ def test_super_admin_spans_all_tenants():
     assert c.check_create("sam", "beta", roles)
 
 
-MIA_READ = ["alpha--net", "alpha--private", "alpha--public", "alpha--reports",
-            "alpha--support", "beta--internal", "beta--net", "beta--pipeline"]
+MIA_READ = ["agent_network_html_creator", "alpha--net", "alpha--private",
+            "alpha--public", "alpha--reports", "alpha--support", "beta--internal",
+            "beta--net", "beta--pipeline", "ddgs_search"]
 MIA_UPDATE = ["alpha--net", "alpha--private", "alpha--public", "alpha--reports",
-              "alpha--support"]
+              "alpha--support", "ddgs_search"]
 
 
 def test_multi_team_user_and_listing():

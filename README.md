@@ -183,10 +183,15 @@ posture.
 
 | Team (tenant) | Its agent networks | Its tools |
 |---|---|---|
-| **alpha** | `alpha--private` · `alpha--public` · `alpha--support` · `alpha--reports` | `alpha-tool` |
-| **beta** | `beta--internal` · `beta--pipeline` | `beta-etl-tool` |
-| **gamma** | `gamma--research` · `gamma--experiments` | `gamma-lab-tool` |
+| **alpha** | `alpha--private` · `alpha--public` · `alpha--support` · `alpha--reports` · `ddgs_search`* | `alpha-tool` |
+| **beta** | `beta--internal` · `beta--pipeline` · `agent_network_html_creator`* | `beta-etl-tool` |
+| **gamma** | `gamma--research` · `gamma--experiments` · `arxiv_retriever`* | `gamma-lab-tool` |
 | **delta** | `delta--onboarding` | - |
+
+\* shared upstream **tool-networks** (from `registries/tools/`), adopted per tenant:
+to the runtime they are agent networks, so they show in the studio sidebar and are
+governed by the same `can_execute` ladder - ownership comes from the tenant parent
+tuple, not the name.
 
 **The personas.** Each is defined only by IdP group membership - the
 `NSAN-<TEAM>-<ROLE>` naming convention does the rest:

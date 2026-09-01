@@ -11,4 +11,14 @@
     "gamma--research.hocon": true,
     "gamma--experiments.hocon": true,
     "delta--onboarding.hocon": true,
+
+    # Shared upstream tool-networks, adopted per tenant. Copied (not referenced)
+    # from registries/tools/ because a manifest entry's path prefix becomes part
+    # of the served agent name - "../tools/x.hocon" would serve "../tools/x".
+    # To the runtime they are agent networks like any other, so the same
+    # can_execute ladder governs them; ownership comes from the
+    # resource->tenant parent tuple, not from the name.
+    "ddgs_search.hocon": true,
+    "agent_network_html_creator.hocon": true,
+    "arxiv_retriever.hocon": true,
 }

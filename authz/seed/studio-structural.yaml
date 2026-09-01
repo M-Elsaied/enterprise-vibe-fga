@@ -23,6 +23,12 @@
 - {user: "tenant:gamma", relation: tenant, object: "agent_network:gamma--experiments"}
 - {user: "tenant:delta", relation: tenant, object: "agent_network:delta--onboarding"}
 
+# shared upstream tool-networks, adopted per tenant (served in the sidebar,
+# governed by the same can_execute ladder as any network)
+- {user: "tenant:alpha", relation: tenant, object: "agent_network:ddgs_search"}
+- {user: "tenant:beta",  relation: tenant, object: "agent_network:agent_network_html_creator"}
+- {user: "tenant:gamma", relation: tenant, object: "agent_network:arxiv_retriever"}
+
 # tools
 - {user: "tenant:alpha", relation: tenant, object: "tool:alpha-tool"}
 - {user: "tenant:beta",  relation: tenant, object: "tool:beta-etl-tool"}
