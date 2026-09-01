@@ -31,6 +31,8 @@ type tenant
     define can_administer: admin or super_admin
     # creating a network or tool is a tenant-scoped question ("create WHAT, WHERE"),
     # so the create verb of the ladder matrix is checked here, not on a not-yet-
-    # existing resource object: analyst excluded.
+    # existing resource object: analyst excluded. This is the ONE create relation -
+    # a prior second relation (can_create_network: member or super_admin) was
+    # removed because it disagreed with the ladder (granted bare members, denied
+    # developers). Everything checks can_create_resources.
     define can_create_resources: admin or developer or super_admin
-    define can_create_network: member or super_admin

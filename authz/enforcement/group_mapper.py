@@ -22,7 +22,11 @@ from typing import FrozenSet, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_PATTERN = r"^NSAN-(?P<tenant>[A-Za-z0-9]+)-(?P<role>ADMINS|DEVELOPERS|ANALYSTS)$"
+# Tenant token allows '-' and '_' so real team names (data-science, med-affairs)
+# map instead of silently producing zero roles. The trailing -<ROLE> anchor plus
+# greedy backtracking keeps the split unambiguous (NSAN-data-science-ADMINS ->
+# tenant=data-science, role=ADMINS).
+DEFAULT_PATTERN = r"^NSAN-(?P<tenant>[A-Za-z0-9_-]+)-(?P<role>ADMINS|DEVELOPERS|ANALYSTS)$"
 DEFAULT_SUPERADMIN_GROUPS = "NSAN-SUPERADMINS"
 
 _ROLE_BY_SUFFIX = {

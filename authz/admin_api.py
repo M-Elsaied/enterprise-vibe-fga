@@ -38,7 +38,10 @@ from pydantic import BaseModel
 
 FGA = os.environ.get("FGA_API_URL", "http://127.0.0.1:18080")
 STORE_NAME = os.environ.get("FGA_STORE_NAME", "vibe-e2e")
-PLATFORM = os.environ.get("PLATFORM_ID", "vibe")
+# Single platform-singleton id, shared with the enforcement library
+# (context_builder reads the same var). Both MUST resolve to the same value or
+# super-admin tuples land on a different platform object than checks look at.
+PLATFORM = os.environ.get("OPENFGA_PLATFORM_ID", "main")
 PORT = int(os.environ.get("ADMIN_API_PORT", "8300"))
 AUDIT_LOG = os.environ.get(
     "ADMIN_AUDIT_LOG",

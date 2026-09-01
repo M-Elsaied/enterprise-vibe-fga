@@ -50,9 +50,16 @@ class Provisioner:
 
     def provision_resource(self, resource_id: str, tenant: str,
                            declared_type: Optional[str] = None) -> str:
-        """A new network/tool/built-in: bind it to its owning tenant.
+        """A new network/tool/built-in: bind it to its OWNING tenant.
 
         The type is resolved by resource_map - a built-in agent name can never
         be written under agent_network here.
+
+        OWNERSHIP IS SINGLE-TENANT. A resource must have exactly one `tenant`
+        parent; adding a second grants that tenant's full ladder (including
+        delete) over an object another tenant owns - the isolation leak from
+        the audit. To SHARE a resource across tenants, use a marketplace
+        `published_to` relation (full profile), never a second tenant parent.
+        This method does not add a second parent for an already-owned resource.
         """
         return self._write(resource_map.parent_tuple(resource_id, tenant, declared_type))

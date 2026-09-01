@@ -32,6 +32,33 @@ def test_unknown_groups_are_ignored():
     assert not roles
 
 
+def test_hyphenated_team_names_map():
+    # regression: real team names with hyphens/underscores must not silently
+    # produce zero roles (the F1 lockout bug)
+    roles = GroupMapper().map_groups(
+        ["NSAN-data-science-ADMINS", "NSAN-med_affairs-DEVELOPERS"])
+    assert roles.memberships == frozenset(
+        {("data-science", "admin"), ("med_affairs", "developer")})
+
+
+def test_seed_owned_resources_have_single_tenant_parent():
+    # F3 invariant: an OWNED resource (agent_network/tool) must have exactly ONE
+    # tenant parent, or a second tenant's ladder (incl. delete) leaks onto it.
+    # special_agent is exempt: the built-ins are shared platform types,
+    # intentionally parented to every tenant (multi-parent = available to all).
+    import re
+    seed = os.path.join(os.path.dirname(__file__), "..", "..",
+                        "authz", "seed", "studio-structural.yaml")
+    parents = {}
+    with open(seed, encoding="utf-8") as handle:
+        for line in handle:
+            m = re.search(r'relation:\s*tenant,\s*object:\s*"((?:agent_network|tool):[^"]+)"', line)
+            if m:
+                parents[m.group(1)] = parents.get(m.group(1), 0) + 1
+    multi = {obj: n for obj, n in parents.items() if n > 1}
+    assert not multi, f"owned resources with >1 tenant parent (isolation leak): {multi}"
+
+
 # ---------------------------------------------------------------- resource map
 
 def test_builtin_names_always_route_to_special_agent():
@@ -83,3 +110,16 @@ def test_dev_identity_on_when_enabled(monkeypatch):
         {"x-dev-user": "tester", "x-dev-groups": "NSAN-ALPHA-ADMINS, NSAN-SUPERADMINS"})
     assert user == "tester"
     assert groups == ["NSAN-ALPHA-ADMINS", "NSAN-SUPERADMINS"]
+
+
+# ---------------------------------------------------- contextual authorizer parsing
+
+def test_contextual_authorizer_identity_group_split():
+    # the Option B carrier splits "<uid>|<groups>" and maps the group segment;
+    # tested without instantiating the FGA client (pure parsing helpers).
+    from enforcement.contextual_authorizer import ContextualOpenFgaAuthorizer as C
+    assert C._split_identity("abc-oid|NSAN-ALPHA-DEVELOPERS,NSAN-SUPERADMINS") == (
+        "abc-oid", "NSAN-ALPHA-DEVELOPERS,NSAN-SUPERADMINS")
+    # no delimiter -> plain user id, persisted mode still works
+    assert C._split_identity("abc-oid") == ("abc-oid", "")
+    assert C._split_identity(None) == ("", "")
