@@ -128,7 +128,7 @@ One set of model modules, two deployment profiles built from two manifests:
 | Modules | core + resources | core + resources + marketplace + connectors + entitlements |
 | Role model | Four-role ladder per tenant: super_admin (platform-wide) / admin / developer / analyst | Ladder + member, per-object builder/editor, marketplace sharing |
 | Resource types | agent_network (read/update/delete/execute), tool (CRUD), special_agent (access; analyst excluded) | + published_to, connectors, llm_model/feature entitlements |
-| Create verb | Tenant-scoped: `can_create_resources` on the tenant ("create WHAT, WHERE") | `can_create_network` on the tenant |
+| Create verb | Tenant-scoped: `can_create_resources` on the tenant ("create WHAT, WHERE") | `can_create_resources` on the tenant |
 | Role delivery | **Option B default**: IdP groups -> per-request contextual tuples, nothing about users persisted | Persisted membership tuples via the admin API |
 | Runtime relation | `AGENT_AUTHORIZER_ALLOW_RELATION=can_execute` | `AGENT_AUTHORIZER_ALLOW_RELATION=can_invoke` |
 | Enforcement code | `authz/enforcement/` (middleware -> group mapper -> contextual tuples -> Check/ListObjects) | neuro-san runtime + admin API |
@@ -267,21 +267,39 @@ services against the same store, so one model answers every "who can do what" qu
 |---|---|---|
 | Invoke / chat / connectivity / MCP | neuro-san runtime (built in) | Check `can_invoke` |
 | List networks (concierge, marketplace) | neuro-san runtime (built in) | ListObjects `can_invoke` |
-| Create network in a tenant | publish service | Check `can_create_network`, write `tenant` + `builder` |
+| Create network in a tenant | publish service | Check `can_create_resources` on the tenant, write `tenant` + `builder` |
 | Publish / unpublish | publish service | Check `can_publish`, write/delete `published_to` |
 | Approve an LLM for a tenant | admin API | Check `can_approve`, write `available_to` |
 | Register a BYOM key | key-registration API | Check `can_use` on `feature:byom` |
 
-Runtime wiring (see `authz/run_e2e.ps1` for the working set):
+Runtime wiring. **The allow-relation differs by profile** - `can_invoke` exists only in
+the full/marketplace model; the studio/core model's invoke verb is `can_execute`. Using
+the wrong one sends checks for a relation that does not exist -> HTTP 500 on every request.
+
+Full / persisted profile (runnable today, from `authz/bootstrap.sh`):
 
 ```
 AGENT_AUTHORIZER=neuro_san.internals.authorization.openfga.open_fga_authorizer.OpenFgaAuthorizer
 AGENT_AUTHORIZER_ACTOR_KEY=user
 AGENT_AUTHORIZER_RESOURCE_KEY=agent_network
-AGENT_AUTHORIZER_ALLOW_RELATION=can_invoke
+AGENT_AUTHORIZER_ALLOW_RELATION=can_invoke          # full profile
 AGENT_AUTHORIZER_ACTOR_ID_METADATA_KEY=user_id
-FGA_API_URL=...   FGA_STORE_NAME=...   FGA_MODEL_ID=<pinned>   FGA_POLICY_FILE=authz/model/model.json
+FGA_API_URL=...   FGA_STORE_NAME=...   FGA_MODEL_ID=<pinned>   FGA_POLICY_FILE=/app/authz/model/model.json
 ```
+
+Studio / Option B profile (group-derived roles - requires the contextual authorizer):
+
+```
+AGENT_AUTHORIZER=authz.enforcement.contextual_authorizer.ContextualOpenFgaAuthorizer
+AGENT_AUTHORIZER_ALLOW_RELATION=can_execute         # studio/core profile
+# proxy sets:  user_id = "<oid>|<comma-separated NSAN group names>"
+```
+
+> **`FGA_MODEL_ID` caveat (upstream):** neuro-san 0.6.94 pins the model only at
+> bootstrap-write time; its per-request Check/ListObjects client is built without a model
+> id, so decisions resolve against the store's *latest* model. Guarantee the pinned model
+> is the newest in the store (no other writer), or patch
+> `neuro_san/internals/authorization/openfga/open_fga_store_cache.py` to pass `model_id`.
 
 ## The write path: onboarding and membership (steps 5-8)
 
@@ -329,6 +347,51 @@ irm -Method Post "http://127.0.0.1:8300/tenants" -Headers @{user_id="sam"} `
 The E2E suite (`tests/e2e_authz/test_admin_api_e2e.py`, 12 tests) proves the loop across
 services: an admin API grant flips the runtime from 403 to 200 immediately, a group
 removal revokes it immediately, and the last-admin invariant holds.
+
+## Deploying to your own environment (the configuration contract)
+
+You bring the cluster, a persistent OpenFGA, and your OIDC proxy (mod_auth_openidc/Entra).
+This is the exact contract to wire it up out of the box.
+
+**1. Choose a profile and mode.** Persisted / full profile is runnable today; studio /
+Option B needs the contextual authorizer (shipped in `authz/enforcement/`).
+
+**2. Bootstrap the store** against your OpenFGA (Linux/macOS):
+
+```bash
+PROFILE=full FGA_API_URL=http://openfga:8080 FGA_STORE_NAME=nsan \
+  FGA_API_TOKEN=<preshared> ./authz/bootstrap.sh
+```
+
+It transforms the model to `authz/model/model.json`, creates the store, writes the model,
+seeds the structural graph, and prints the env (including the pinned `FGA_MODEL_ID`). The
+image already `COPY`s `authz/` and bakes in `openfga-sdk` (see `deploy/Dockerfile`).
+
+**3. Identity - one id, two headers, stripped by the proxy.** Pick **one** stable
+identifier (recommend the Entra **`oid`**) and use it identically in every persisted
+`user:<id>` tuple. Your proxy must, per request, **strip any client-supplied copies** and
+set:
+
+| Consumed by | Header | Value |
+|---|---|---|
+| Runtime (persisted) | `user_id` | `<oid>` |
+| Runtime (Option B) | `user_id` | `<oid>\|<comma-separated NSAN group names>` |
+| Enforcement library / admin API | `x-auth-request-user` / `x-auth-request-groups` | `<oid>` / group names |
+
+**4. Entra groups must arrive as NAMES, not GUIDs.** Entra emits group object-IDs by
+default -> the mapper produces zero roles -> deny-all. Configure the app registration's
+`groups` optional claim to emit **group names** following `NSAN-<TEAM>-<ROLE>` (team names
+may contain `-`/`_`). The super-admin group's GUID can alternatively go in
+`OPENFGA_SUPERADMIN_GROUPS`; per-team GUID mapping would need a code change.
+
+**5. Reconcile the platform id.** `OPENFGA_PLATFORM_ID` (library + admin API) must be one
+value everywhere (default `main`) or super-admin silently denies.
+
+**6. Keep `OPENFGA_DEV_IDENTITY` unset** in production - enabling it lets `X-Dev-*` headers
+spoof any identity.
+
+Full env template: `.env.example` (authz block). Per-component keep/discard and the
+enforcement library API: `authz/README.md`.
 
 ## Quick start (Windows)
 
@@ -447,7 +510,7 @@ enterprise-vibe-fga/
 
 ```
 authz/model/          fga.mod + core / agents / connectors / entitlements modules
-authz/tests/          tenancy.fga.yaml - model tests (fga model test, runs in CI, no server)
+authz/tests/          *.fga.yaml - model tests (fga model test); gated in CI by .github/workflows/authz.yml
 authz/seed/           tuples.yaml - demo personas and grants
 authz/run_e2e.ps1     one-command end-to-end run
 registries/vibe/      three demo tenant networks (alpha--private, alpha--public, beta--internal)

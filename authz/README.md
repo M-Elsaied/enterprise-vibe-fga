@@ -36,8 +36,9 @@ models and consistency parameters).
 
 ## The four test layers
 
-1. **Model tests** (`tests/tenancy.fga.yaml`): `fga model test` against the CLI's built-in
-   engine. Runs in CI with no server. Asserts grants AND denials: tenant isolation,
+1. **Model tests** (`tests/*.fga.yaml`): `fga model test` against the CLI's built-in
+   engine, no server needed. Gated in CI by `.github/workflows/authz.yml` (validates both
+   manifests, runs all three suites). Asserts grants AND denials: tenant isolation,
    marketplace publish (org-wide and targeted), super-admin transitivity, time-boxed
    connector access (condition context both sides of expiry), LLM and BYOM entitlements,
    and ListObjects visibility per user.

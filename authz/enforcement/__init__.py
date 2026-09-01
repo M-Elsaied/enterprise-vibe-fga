@@ -19,6 +19,10 @@ from .middleware import IdentityMiddleware, RequestIdentity, get_identity
 from .provision import Provisioner
 from . import resource_map
 
+# The runtime Option B carrier is imported lazily by name via AGENT_AUTHORIZER
+# (authz.enforcement.contextual_authorizer.ContextualOpenFgaAuthorizer); it is
+# NOT imported here so that importing the library never hard-requires neuro_san.
+
 __all__ = [
     "StudioAuthzClient", "build_contextual_tuples", "platform_id",
     "dev_identity_enabled", "GroupMapper", "RoleMemberships",
