@@ -178,6 +178,31 @@ console below) before you switch. Persona testing rides the `OPENFGA_DEV_IDENTIT
 unset it and every spoofed identity collapses to anonymous - that is the production
 posture.
 
+**The demo world.** Four teams, each a tenant; networks are named
+`<team>--<name>`, so ownership is visible at a glance:
+
+| Team (tenant) | Its agent networks | Its tools |
+|---|---|---|
+| **alpha** | `alpha--private` · `alpha--public` · `alpha--support` · `alpha--reports` | `alpha-tool` |
+| **beta** | `beta--internal` · `beta--pipeline` | `beta-etl-tool` |
+| **gamma** | `gamma--research` · `gamma--experiments` | `gamma-lab-tool` |
+| **delta** | `delta--onboarding` | - |
+
+**The personas.** Each is defined only by IdP group membership - the
+`NSAN-<TEAM>-<ROLE>` naming convention does the rest:
+
+| Persona | IdP groups | Resulting role(s) | Expect to see |
+|---|---|---|---|
+| **adam** | `NSAN-ALPHA-ADMINS` | admin @ alpha | alpha's 4 networks, every verb incl. delete |
+| **dina** | `NSAN-ALPHA-DEVELOPERS` | developer @ alpha | alpha's 4 networks; update yes, delete no |
+| **ana** | `NSAN-ALPHA-ANALYSTS` | analyst @ alpha | alpha's 4 networks, run-only; no special agents |
+| **bob** | `NSAN-BETA-DEVELOPERS` | developer @ beta | beta's 2 networks, nothing of alpha's |
+| **gil** | `NSAN-GAMMA-DEVELOPERS` | developer @ gamma | gamma's 2 networks |
+| **dora** | `NSAN-DELTA-ADMINS` | admin @ delta | delta's 1 network |
+| **mia** | alpha developers + beta analysts | developer @ alpha AND analyst @ beta | 6 networks, different verbs per team |
+| **sam** | `NSAN-SUPERADMINS` | super_admin (platform-wide) | all 9 networks across all 4 teams |
+| **eve** | none mapped | none | an empty studio |
+
 ### dina - developer in team alpha
 
 Sees alpha's four networks, and only alpha's. Update yes, delete no.
