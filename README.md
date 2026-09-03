@@ -97,11 +97,15 @@ rather than assumed. Reading them in order explains every component:
    trust chain.
 
 Everything that surprised us along the way is recorded in the gotchas section below,
-each with a test pinning it down. Deliberately NOT built here (yet): real SSO/IdP
-integration, the marketplace publish workflow, per-tenant key storage, and the
-production assurance jobs (shadow checks, reconcile, tripwire) - they are designed in
-`authz/README.md` but this repo ships the reference implementation and proof, not the
-deployment.
+each with a test pinning it down. What ships for deployment: the model, the enforcement
+library (packaged, importable), the runtime authorizers for both modes (stock persisted
++ the `ContextualOpenFgaAuthorizer` for Option B), a cross-platform `authz/bootstrap.sh`,
+the image wiring (`deploy/Dockerfile` copies `authz/` and bakes in `openfga-sdk`), the
+`.env.example` contract, and a CI gate (`.github/workflows/authz.yml`). What you still
+bring: your cluster, a persistent OpenFGA, and your OIDC proxy (the repo's demo gateway is
+the stand-in for it). Not built here yet: the marketplace publish workflow, per-tenant key
+storage, and the production assurance jobs (shadow checks, reconcile, tripwire) - designed
+in `authz/README.md`.
 
 ## What the model gives you
 
@@ -163,11 +167,12 @@ a not-yet-existing object.
 layer on every request; the group **naming convention is the mapping**
 (`NSAN-<TEAM>-<ROLE>` plus a global `NSAN-SUPERADMINS`); the enforcement library flattens
 the caller's groups into per-request contextual tuples. Onboarding a new team is a tenant
-tuple plus three IdP groups - zero code. Three open stitching notes, stated honestly:
-header trust and stripping are the upstream proxy's job; Entra emits group GUIDs by
-default so the claim must be configured to carry names (or the mapper given a GUID map);
-and the stock runtime path consumes only `user_id` (persisted-mode roles) until the small
-contextual-authorizer extension is added.
+tuple plus three IdP groups - zero code. Two open stitching notes, stated honestly:
+header trust and stripping are the upstream proxy's job; and Entra emits group GUIDs by
+default so the claim must be configured to carry names (or the mapper given a GUID map).
+The Option B runtime carrier now ships: `authz.enforcement.contextual_authorizer.ContextualOpenFgaAuthorizer`
+reads the group claim and injects the per-request contextual tuples (the stock authorizer
+sends only `user_id` and enforces persisted tuples).
 
 ## The proof: the studio, per persona
 
@@ -259,9 +264,11 @@ ignored - one env var separates test and production.
 ## The read path: how enforcement works (steps 1-4)
 
 The neuro-san runtime checks exactly one relation on one type for every HTTP/MCP request:
-`can_invoke` on `agent_network:<served-name>` (wired through env vars, no fork). Everything
-else - create, publish, LLM approval, BYOM - is checked and written by the platform's own
-services against the same store, so one model answers every "who can do what" question.
+the invoke verb on `agent_network:<served-name>` - `can_invoke` in the full profile,
+`can_execute` in the studio profile (wired through env vars, no fork). Everything else -
+create, update, delete, tool CRUD, special-agent access - is checked by the platform's own
+services against the same store (the admin API and, in the studio profile, the enforcement
+library); the runtime front door itself gates only invocation.
 
 | Operation | Enforcement point | FGA interaction |
 |---|---|---|
@@ -363,9 +370,10 @@ PROFILE=full FGA_API_URL=http://openfga:8080 FGA_STORE_NAME=nsan \
   FGA_API_TOKEN=<preshared> ./authz/bootstrap.sh
 ```
 
-It transforms the model to `authz/model/model.json`, creates the store, writes the model,
-seeds the structural graph, and prints the env (including the pinned `FGA_MODEL_ID`). The
-image already `COPY`s `authz/` and bakes in `openfga-sdk` (see `deploy/Dockerfile`).
+It creates the store, writes the model, exports `authz/model/model.json` (the
+`FGA_POLICY_FILE`), seeds the structural graph, and prints the env (including the pinned
+`FGA_MODEL_ID`). The image already `COPY`s `authz/` and bakes in `openfga-sdk`
+(see `deploy/Dockerfile`).
 
 **3. Identity - one id, two headers, stripped by the proxy.** Pick **one** stable
 identifier (recommend the Entra **`oid`**) and use it identically in every persisted
@@ -405,20 +413,26 @@ py -3.12 -m venv .venv
 powershell -ExecutionPolicy Bypass -File authz\run_e2e.ps1
 ```
 
-Expected output: `Tests 4/4 passing`, then `47 passed`, then `ALL GREEN`.
+Expected output: `Tests 4/4 passing`, then `50 passed`, then `ALL GREEN`.
 
 ### Test it yourself from a front end
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File authz\run_e2e.ps1 -KeepUp   # stack stays running
-.venv\Scripts\python.exe authz\demo_ui.py                            # persona console
-# open http://127.0.0.1:8200
+$env:OPENFGA_DEV_IDENTITY="enabled"; $env:FGA_API_URL="http://127.0.0.1:18080"
+.venv\Scripts\python.exe authz\studio_demo.py                        # studio persona console
+# open http://127.0.0.1:8400
 ```
 
-The persona console lets you switch between sam / ada / alice / bob / eve / anonymous and
-watch the concierge list and per-network 200/403 change live. Its tiny proxy injects the
-`user_id` header the way an SSO layer would in a real deployment - the browser
-never talks to the runtime directly with a self-asserted identity.
+This is the **studio-profile** console shown in the screenshots above: switch between the
+tenant x role personas (adam / dina / ana / bob / gil / dora / mia / sam / eve) and watch
+the full verb matrix - networks, tools, special-agent access, create rights - resolve live
+through the real enforcement library (group names -> contextual tuples -> Check/ListObjects).
+The `prod mode` persona sends no dev headers and collapses to anonymous, proving the
+`OPENFGA_DEV_IDENTITY` flag is the only door.
+
+*(The older full-profile console `authz\demo_ui.py` on :8200, with marketplace personas
+sam / ada / alice / bob / eve, still exists for the full profile.)*
 
 ### See enforcement in the real studio (nsflow)
 
@@ -437,11 +451,14 @@ nsflow reinstall; `--remove` to undo):
 ```
 
 Open the studio at http://127.0.0.1:4173. A floating "FGA persona" pill bar sits in the
-bottom-right corner: click sam / ada / alice / bob / eve and the studio reloads as that
-persona - the Available Agents sidebar changes (alice sees `alpha--private` +
-`alpha--public`, bob sees `beta--internal` + `alpha--public`, sam sees everything), and
-chat and connectivity are authorized the same way. The standalone switcher page also
-remains at http://127.0.0.1:8210/__persona.
+bottom-right corner: click a persona and the studio reloads as them - the Available Agents
+sidebar changes and chat/connectivity are authorized the same way. The standalone switcher
+page also remains at http://127.0.0.1:8210/__persona. As launched above (`run_e2e.ps1`
+serves the **full** profile) the personas are the marketplace set (sam / ada / alice / bob
+/ eve). The per-persona studio screenshots earlier in this README use the **studio**
+profile - reproduce those with the :8400 console, or point the runtime at the studio store
+(`FGA_STORE_NAME=studio-e2e`, `AGENT_AUTHORIZER_ALLOW_RELATION=can_execute`) before
+launching nsflow.
 
 Why the gateway is required: nsflow 0.6.19 sends no `user_id` on its concierge call and
 hardcodes chat identity to the backend's `USER` env var, so identity must be asserted at
@@ -462,29 +479,40 @@ enterprise-vibe-fga/
 |   |   |-- core.fga.mod               STUDIO profile manifest (core + resources)
 |   |   |-- full.fga.mod               FULL profile manifest (all modules)
 |   |   `-- modules/                   core / resources / marketplace / connectors / entitlements
-|   |-- enforcement/                   studio-profile library: middleware, group mapper,
-|   |                                  contextual tuples (Option B), client, provisioner
+|   |-- enforcement/                   the library (packaged, importable as authz.enforcement)
+|   |   |-- resource_map.py            single writer/checker routing (kills type drift)
+|   |   |-- group_mapper.py            NSAN-<TEAM>-<ROLE> group names -> roles
+|   |   |-- context_builder.py         roles -> per-request contextual tuples
+|   |   |-- middleware.py              trusted-header identity (Starlette)
+|   |   |-- client.py                  Check / ListObjects
+|   |   |-- provision.py               structural parent writes (single-owner)
+|   |   |-- dev_identity.py            flag-gated persona testing
+|   |   `-- contextual_authorizer.py   Option B runtime AGENT_AUTHORIZER (the carrier)
+|   |-- model/model.json               generated FGA_POLICY_FILE (by bootstrap; gitignored)
 |   |-- tests/
 |   |   |-- tenancy.fga.yaml           full-profile suite (grants AND denials)
 |   |   |-- studio-persisted.fga.yaml  4-role ladder matrix, persisted mode
 |   |   `-- studio-contextual.fga.yaml same matrix, Option B contextual mode
 |   |-- seed/
-|   |   `-- tuples.yaml                demo personas and grants
-|   |-- run_e2e.ps1                    one-command end-to-end run
+|   |   |-- tuples.yaml                full-profile demo grants
+|   |   |-- studio-structural.yaml     studio structural graph (Option B: no roles)
+|   |   `-- studio-persisted-demo.yaml studio role tuples (persisted-mode demo)
+|   |-- bootstrap.sh                   NEW  cross-platform store/model/seed + pinned id
+|   |-- run_e2e.ps1                    one-command end-to-end run (Windows dev)
 |   |-- requirements-authz.txt         minimal python deps
 |   |-- admin_api.py                   onboarding/membership API, FGA-checked (:8300)
-|   |-- demo_ui.py                     persona console (standalone front end, :8200)
-|   |-- studio_gateway.py              identity gateway nsflow -> neuro-san (:8210)
-|   |-- install_studio_widget.py       injects the in-studio persona pill bar
-|   `-- README.md                      layer docs: test layers, runbook, tuple writers
-|-- registries/vibe/              NEW  demo tenant networks
-|   |-- manifest.hocon
-|   |-- alpha--private.hocon           tenant alpha only
-|   |-- alpha--public.hocon            published platform-wide
-|   `-- beta--internal.hocon           tenant beta only
+|   |-- studio_demo.py                 studio persona console (:8400)
+|   |-- demo_ui.py / studio_gateway.py / install_studio_widget.py   dev front-end scaffolding
+|   `-- README.md                      layer docs: test layers, runbook, keep/discard
+|-- deploy/Dockerfile             MOD  COPYs authz/ + bakes in openfga-sdk
+|-- .env.example                  MOD  authz config contract (FGA_*/AGENT_AUTHORIZER_*/OPENFGA_*)
+|-- .github/workflows/authz.yml   NEW  CI gate: validate both manifests + run all suites
+|-- registries/vibe/              NEW  demo world: 4 teams, 9 networks + 3 tool-networks
 |-- tests/e2e_authz/              NEW
-|   |-- test_tenancy_e2e.py            18 live HTTP assertions vs the running stack
-|   `-- test_admin_api_e2e.py          12 onboarding tests incl. grant->200 / revoke->403
+|   |-- test_tenancy_e2e.py            full-profile live HTTP assertions
+|   |-- test_admin_api_e2e.py          12 onboarding tests incl. grant->200 / revoke->403
+|   |-- test_studio_profile_e2e.py     studio ladder + isolation live vs OpenFGA
+|   `-- test_studio_units.py           mapper/resource_map/authorizer unit tests
 `-- docs/
     |-- UPSTREAM-README.md        MOVED  original neuro-san-studio README
     `-- images/studio-*.png       NEW   the studio-profile screenshots above
