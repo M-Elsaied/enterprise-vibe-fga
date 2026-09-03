@@ -23,6 +23,20 @@ cd ..\tests
 
 ## Getting the binaries (one time)
 
+Full first-timer setup (both OSes) is in the root README's "Getting started from scratch".
+Binaries only:
+
+macOS / Linux:
+```bash
+mkdir -p tools
+ARCH=$([ "$(uname -m)" = "arm64" ] && echo arm64 || echo amd64)
+OS=$([ "$(uname)" = "Darwin" ] && echo darwin || echo linux)
+curl -sSL "https://github.com/openfga/openfga/releases/download/v1.18.3/openfga_1.18.3_${OS}_${ARCH}.tar.gz" | tar -xz -C tools openfga
+curl -sSL "https://github.com/openfga/cli/releases/download/v0.7.20/fga_0.7.20_${OS}_${ARCH}.tar.gz"          | tar -xz -C tools fga
+chmod +x tools/openfga tools/fga
+```
+
+Windows (PowerShell):
 ```powershell
 New-Item -ItemType Directory -Force tools | Out-Null
 Invoke-WebRequest "https://github.com/openfga/openfga/releases/download/v1.18.3/openfga_1.18.3_windows_amd64.tar.gz" -OutFile tools\openfga.tar.gz

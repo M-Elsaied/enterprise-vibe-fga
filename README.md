@@ -401,28 +401,109 @@ spoof any identity.
 Full env template: `.env.example` (authz block). Per-component keep/discard and the
 enforcement library API: `authz/README.md`.
 
-## Quick start (Windows)
+## Getting started from scratch (first-timer)
+
+Assumes a clean machine with nothing installed. No Docker or Node needed - the runner
+starts a local in-memory OpenFGA from a downloaded binary. Pick your OS below.
+
+**What you need either way:** Git, Python 3.12, and two binaries (`openfga`, `fga`) placed
+in a `tools/` folder in the repo.
+
+---
+
+### Windows (PowerShell)
+
+Use **PowerShell**, not Command Prompt (cmd), for the setup. Open PowerShell and:
 
 ```powershell
-# 1. toolchain (one time)
-py -3.12 -m venv .venv
-.venv\Scripts\python.exe -m pip install -r authz\requirements-authz.txt
-# download openfga.exe and fga.exe into tools\ (see authz\README.md)
+# 1. Install Git + Python 3.12 (skip any you already have), then open a NEW window
+winget install --id Git.Git -e --silent
+winget install --id Python.Python.3.12 -e --silent
 
-# 2. the whole thing: model tests -> OpenFGA -> seed -> neuro-san -> E2E pytest
+# 2. Get the code
+git clone https://github.com/M-Elsaied/enterprise-vibe-fga.git
+cd enterprise-vibe-fga
+git checkout studio-rbac
+
+# 3. Python environment
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r authz\requirements-authz.txt
+
+# 4. Download the OpenFGA + fga binaries into tools\
+New-Item -ItemType Directory -Force tools | Out-Null
+Invoke-WebRequest "https://github.com/openfga/openfga/releases/download/v1.18.3/openfga_1.18.3_windows_amd64.tar.gz" -OutFile tools\openfga.tar.gz
+Invoke-WebRequest "https://github.com/openfga/cli/releases/download/v0.7.20/fga_0.7.20_windows_amd64.tar.gz"          -OutFile tools\fga.tar.gz
+tar -xzf tools\openfga.tar.gz -C tools openfga.exe
+tar -xzf tools\fga.tar.gz     -C tools fga.exe
+
+# 5. Run everything: model tests -> OpenFGA -> seed -> neuro-san -> pytest
 powershell -ExecutionPolicy Bypass -File authz\run_e2e.ps1
 ```
 
-Expected output: `Tests 4/4 passing`, then `50 passed`, then `ALL GREEN`.
+**From Command Prompt (cmd)** instead? Steps 1-4 differ per tool, but you launch the runner
+the same way - `powershell` is the interpreter for the `.ps1`:
+
+```bat
+powershell -ExecutionPolicy Bypass -File authz\run_e2e.ps1
+```
+
+---
+
+### macOS / Linux (bash/zsh)
+
+```bash
+# 1. Install prerequisites (macOS shown; Linux: use apt/dnf)
+brew install git python@3.12 jq            #  jq is required by the runner
+
+# 2. Get the code
+git clone https://github.com/M-Elsaied/enterprise-vibe-fga.git
+cd enterprise-vibe-fga
+git checkout studio-rbac
+
+# 3. Python environment
+python3.12 -m venv .venv
+./.venv/bin/python -m pip install -r authz/requirements-authz.txt
+
+# 4. Download the OpenFGA + fga binaries into tools/  (use _arm64 on Apple Silicon)
+mkdir -p tools
+ARCH=$([ "$(uname -m)" = "arm64" ] && echo arm64 || echo amd64)
+OS=$([ "$(uname)" = "Darwin" ] && echo darwin || echo linux)
+curl -sSL "https://github.com/openfga/openfga/releases/download/v1.18.3/openfga_1.18.3_${OS}_${ARCH}.tar.gz" | tar -xz -C tools openfga
+curl -sSL "https://github.com/openfga/cli/releases/download/v0.7.20/fga_0.7.20_${OS}_${ARCH}.tar.gz"          | tar -xz -C tools fga
+chmod +x tools/openfga tools/fga
+
+# 5. Run everything
+chmod +x authz/run_e2e.sh
+./authz/run_e2e.sh
+```
+
+---
+
+**Expected output either way:** `Tests 4/4 passing`, then `50 passed`, then `ALL GREEN`.
+
+If it fails, the two usual causes: the binaries aren't the pinned versions above (this repo
+uses `fga` v0.7.20 - `--format modular`, not `--input-format`), or `jq` is missing on
+macOS/Linux (`brew install jq`).
 
 ### Test it yourself from a front end
 
+Leave the stack running, then start the studio persona console on :8400.
+
+Windows (PowerShell):
 ```powershell
 powershell -ExecutionPolicy Bypass -File authz\run_e2e.ps1 -KeepUp   # stack stays running
 $env:OPENFGA_DEV_IDENTITY="enabled"; $env:FGA_API_URL="http://127.0.0.1:18080"
-.venv\Scripts\python.exe authz\studio_demo.py                        # studio persona console
-# open http://127.0.0.1:8400
+.\.venv\Scripts\python.exe authz\studio_demo.py                      # studio persona console
 ```
+
+macOS / Linux (bash):
+```bash
+./authz/run_e2e.sh --keep-up          # stack stays running
+OPENFGA_DEV_IDENTITY=enabled FGA_API_URL=http://127.0.0.1:18080 \
+  ./.venv/bin/python authz/studio_demo.py
+```
+
+Then open **http://127.0.0.1:8400**.
 
 This is the **studio-profile** console shown in the screenshots above: switch between the
 tenant x role personas (adam / dina / ana / bob / gil / dora / mia / sam / eve) and watch
@@ -497,8 +578,9 @@ enterprise-vibe-fga/
 |   |   |-- tuples.yaml                full-profile demo grants
 |   |   |-- studio-structural.yaml     studio structural graph (Option B: no roles)
 |   |   `-- studio-persisted-demo.yaml studio role tuples (persisted-mode demo)
-|   |-- bootstrap.sh                   NEW  cross-platform store/model/seed + pinned id
-|   |-- run_e2e.ps1                    one-command end-to-end run (Windows dev)
+|   |-- bootstrap.sh                   NEW  deploy bootstrap: store/model/seed + pinned id
+|   |-- run_e2e.ps1                    one-command end-to-end run (Windows)
+|   |-- run_e2e.sh                     NEW  one-command end-to-end run (macOS/Linux)
 |   |-- requirements-authz.txt         minimal python deps
 |   |-- admin_api.py                   onboarding/membership API, FGA-checked (:8300)
 |   |-- studio_demo.py                 studio persona console (:8400)
