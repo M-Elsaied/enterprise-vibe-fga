@@ -479,7 +479,9 @@ chmod +x authz/run_e2e.sh
 
 ---
 
-**Expected output either way:** `Tests 4/4 passing`, then `50 passed`, then `ALL GREEN`.
+**Expected output either way:** `Tests 4/4 passing`, then `63 passed`, then `ALL GREEN`.
+The 63 include the Option-B suite (`test_option_b_http_e2e.py`) that drives group-derived
+roles through a live neuro-san server wired to the contextual authorizer.
 
 If it fails, the two usual causes: the binaries aren't the pinned versions above (this repo
 uses `fga` v0.7.20 - `--format modular`, not `--input-format`), or `jq` is missing on
@@ -546,6 +548,111 @@ hardcodes chat identity to the backend's `USER` env var, so identity must be ass
 the hop the runtime trusts - the same place an SSO layer would assert it in any deployment
 (`browser -> nsflow -> gateway -> neuro-san -> OpenFGA`).
 
+## Taking this to production (beyond the simulated demo)
+
+Everything above runs against an **in-memory OpenFGA** with **demo tenants/users** and a
+**simulated identity layer**. None of that is the authorization logic - the model, the
+enforcement library, and the two authorizers are exactly what you ship. This section is
+the checklist to go from "green demo" to "enforcing in your cluster": what is simulated,
+what you replace it with, which files to take, and how.
+
+### What is real vs simulated
+
+| Concern | In this repo (demo) | Production - what you do |
+|---|---|---|
+| **Model + relations** | `authz/model/` (7 files) | **Ship as-is.** This *is* the policy. |
+| **Enforcement + authorizers** | `authz/enforcement/` | **Ship as-is** (packaged, in the image). |
+| **OpenFGA store** | in-memory, wiped on restart (`run_e2e`) | **Persistent OpenFGA** (Postgres) you operate |
+| **Tenants / users / grants** | demo seeds (`alpha`/`beta`, `sam`/`dina`) | **Your** tenants + **real Entra `oid`s**; you seed them |
+| **Identity** | dev gateway / `X-Dev-*` / persona picker | **Your mod_auth_openidc + Entra**, real headers |
+| **Roles delivery** | persona tuples, or group-encoded dev header | **persisted** tuples (IdP sync) **or** Option B header |
+| **Bootstrap** | `run_e2e.ps1/.sh` (memory) | **`authz/bootstrap.sh`** against your OpenFGA |
+
+### Files to take (ship) vs drop (demo-only)
+
+**Ship** (all under version control, all reproducible from a clone):
+- `authz/model/**` - the model modules + both manifests
+- `authz/enforcement/**` - the library and both authorizers (packaged via `pyproject.toml`)
+- `authz/bootstrap.sh` - the store/model/seed bootstrap
+- `authz/admin_api.py` - the governed grant/revoke API (harden per below)
+- `deploy/Dockerfile` - already `COPY`s `authz/` and bakes in `openfga-sdk`
+- `.env.example` - the full config contract
+- `.github/workflows/authz.yml` - the model-test CI gate
+
+**Drop** (dev/demo scaffolding - do not deploy):
+- `authz/run_e2e.ps1` / `run_e2e.sh` (local test harness; reference for the env set)
+- `authz/studio_demo.py`, `authz/demo_ui.py`, `authz/studio_gateway.py`,
+  `authz/install_studio_widget.py` (persona UIs / SSO stand-in)
+- `authz/seed/*.yaml` (demo data - replace with your own; keep as the format reference)
+- `registries/vibe/**` (demo agent networks)
+
+### The changes, step by step
+
+**1. Stand up a persistent OpenFGA.** Deploy OpenFGA with a Postgres datastore
+(`OPENFGA_DATASTORE_ENGINE=postgres`, `OPENFGA_DATASTORE_URI=...`), enable auth
+(`OPENFGA_AUTHN_METHOD=preshared`, a key in a secret), and restrict network access to the
+runtime + admin API. The in-memory engine of the demo has no persistence and cannot scale
+past one replica.
+
+**2. Bootstrap your store from the model.** On a machine with the `fga` CLI + your OpenFGA
+reachable:
+```bash
+PROFILE=studio   FGA_API_URL=https://openfga.internal:8080  FGA_STORE_NAME=nsan \
+  FGA_API_TOKEN="$PRESHARED"   ./authz/bootstrap.sh      # PROFILE=full for the marketplace model
+```
+It writes the model, exports `authz/model/model.json` (the `FGA_POLICY_FILE`, baked into
+your image via the Dockerfile), and prints the pinned `FGA_MODEL_ID`. Put that id in your
+runtime config. **Model-pin caveat:** neuro-san 0.6.94 ignores `FGA_MODEL_ID` on the
+per-request check path (it uses the store's latest model); either guarantee the pinned
+model is the newest in the store, or patch `open_fga_store_cache.py` to pass the id (one
+line, noted in the read-path section).
+
+**3. Seed YOUR structure - not the demo tuples.** OpenFGA needs the structural graph
+(never role tuples in Option B). Replace `authz/seed/studio-structural.yaml` with your
+own:
+```yaml
+# one platform, your tenants, your resources (object id = the served network name)
+- {user: "platform:main", relation: platform, object: "tenant:<your-team>"}
+- {user: "tenant:<your-team>", relation: tenant, object: "agent_network:<network-name>"}
+# ... one tenant parent per owned resource (single-owner - see the isolation test)
+```
+Write it with `fga tuple write`, or provision at runtime via `authz.enforcement.Provisioner`
+/ the admin API when networks are created. The built-in special agents are parented to
+every tenant (they are shared).
+
+**4. Wire identity through your real SSO proxy.** mod_auth_openidc (or your gateway) must,
+per request, **strip any client-supplied** `user_id` / `X-Auth-Request-*` / `X-Dev-*`
+headers and set them from **verified Entra claims**:
+- Use the immutable **`oid`** as the user id, everywhere (headers *and* every persisted
+  `user:<id>` tuple). Re-seed any bootstrap super-admin with the real oid.
+- Configure the Entra app registration to emit **group names** in the `groups` claim
+  (not GUIDs) following `NSAN-<TEAM>-<ROLE>`; otherwise roles map to nothing (deny-all).
+- **Persisted mode:** proxy sets `user_id: <oid>`. Roles are stored tuples (write them via
+  the admin API or a nightly IdP->tuple sync).
+- **Option B mode:** proxy sets `user_id: <oid>|<comma-separated NSAN group names>` and you
+  set `AGENT_AUTHORIZER=authz.enforcement.contextual_authorizer.ContextualOpenFgaAuthorizer`.
+  No role tuples are persisted; the authorizer injects them per request.
+
+**5. Set the runtime env** (from `.env.example`), profile-correct:
+`AGENT_AUTHORIZER` (stock vs contextual), `AGENT_AUTHORIZER_ALLOW_RELATION`
+(`can_invoke` full / `can_execute` studio), the actor/resource keys (lowercase!),
+`FGA_API_URL/STORE_NAME/MODEL_ID/POLICY_FILE/API_TOKEN`, `OPENFGA_PLATFORM_ID=main` (must
+match the admin API), and **leave `OPENFGA_DEV_IDENTITY` unset**.
+
+**6. Harden the admin API** if you use persisted mode: put it behind the same SSO proxy
+(its caller identity is a trusted header), give it the `FGA_API_TOKEN`, and point its audit
+log at a durable sink instead of the local JSONL file.
+
+**7. Gate changes with CI.** `.github/workflows/authz.yml` already runs `fga model
+validate` + all model-test suites on model/test PRs - keep it required so a model change
+can never merge without the deny-cases passing.
+
+### What you do NOT change
+
+The model modules, the enforcement library, both authorizers, `resource_map` (the
+write/check type-safety invariant), and the group-name convention. Those are the
+authorization system; the demo only swaps the *data* and the *identity source* around them.
+
 ## What this change adds (file tree)
 
 Everything below is introduced by this repo; every file not shown is the unmodified
@@ -594,6 +701,7 @@ enterprise-vibe-fga/
 |   |-- test_tenancy_e2e.py            full-profile live HTTP assertions
 |   |-- test_admin_api_e2e.py          12 onboarding tests incl. grant->200 / revoke->403
 |   |-- test_studio_profile_e2e.py     studio ladder + isolation live vs OpenFGA
+|   |-- test_option_b_http_e2e.py      Option B through a live runtime (contextual authorizer)
 |   `-- test_studio_units.py           mapper/resource_map/authorizer unit tests
 `-- docs/
     |-- UPSTREAM-README.md        MOVED  original neuro-san-studio README
