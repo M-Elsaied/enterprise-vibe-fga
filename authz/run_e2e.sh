@@ -18,15 +18,16 @@ PY="$ROOT/.venv/bin/python"
 LOGS="$ROOT/.e2e-logs"; mkdir -p "$LOGS"
 cd "$ROOT"   # backgrounded procs inherit this CWD; $! is then the real pid
 
-FGA_PID=""; SERVER_PID=""; ADMIN_PID=""
+FGA_PID=""; SERVER_PID=""; ADMIN_PID=""; OPTIONB_PID=""
 cleanup() {
   if [ "$KEEP_UP" -eq 0 ]; then
     echo "== teardown =="
+    [ -n "$OPTIONB_PID" ] && kill "$OPTIONB_PID" 2>/dev/null || true
     [ -n "$ADMIN_PID" ]  && kill "$ADMIN_PID"  2>/dev/null || true
     [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null || true
     [ -n "$FGA_PID" ]    && kill "$FGA_PID"    2>/dev/null || true
   else
-    echo "KeepUp: openfga pid $FGA_PID, server pid $SERVER_PID, admin pid $ADMIN_PID"
+    echo "KeepUp: openfga pid $FGA_PID, full-profile server pid $SERVER_PID, admin pid $ADMIN_PID, Option-B server pid $OPTIONB_PID"
   fi
 }
 trap cleanup EXIT
@@ -64,6 +65,7 @@ echo "store=$SID model=$MID"
 echo "== seeding studio-profile store =="
 SSID=$("$FGA" store create --name studio-e2e | jq -r '.store.id')
 SMID=$(cd "$ROOT/authz/model" && "$FGA" model write --store-id "$SSID" --file core.fga.mod --format modular | jq -r '.authorization_model_id')
+( cd "$ROOT/authz/model" && "$FGA" model get --store-id "$SSID" --format json > "$LOGS/studio-model.json" )
 "$FGA" tuple write --store-id "$SSID" --file "$ROOT/authz/seed/studio-structural.yaml" >/dev/null
 echo "studio store=$SSID model=$SMID"
 
@@ -91,11 +93,27 @@ echo "== starting admin API =="
 ADMIN_PID=$!
 wait_http "http://127.0.0.1:8300/healthz" 30 || { echo "admin API not ready"; exit 1; }
 
+# ---- 4c. Option B server: neuro-san wired to the contextual authorizer ----
+# Studio store (structural only - NO roles persisted); roles arrive in the
+# group-encoded user_id header and become contextual tuples. Proves Option B.
+echo "== starting Option B server (contextual authorizer) =="
+export PYTHONPATH="$ROOT"
+export AGENT_AUTHORIZER="authz.enforcement.contextual_authorizer.ContextualOpenFgaAuthorizer"
+export AGENT_AUTHORIZER_ALLOW_RELATION="can_execute"
+export FGA_STORE_NAME="studio-e2e"
+export FGA_MODEL_ID="$SMID"
+export FGA_POLICY_FILE="$LOGS/studio-model.json"
+"$PY" -m neuro_san.service.main_loop.server_main_loop --http_port 8124 \
+  >"$LOGS/optionb.out.log" 2>"$LOGS/optionb.err.log" &
+OPTIONB_PID=$!
+wait_http "http://127.0.0.1:8124/readyz" 90 || { echo "Option B server not ready; see $LOGS/optionb.err.log"; exit 1; }
+
 # ---- 5. E2E suite ---------------------------------------------------------
 echo "== pytest tests/e2e_authz =="
 export E2E_BASE="http://127.0.0.1:$HTTP_PORT"
 export ADMIN_BASE="http://127.0.0.1:8300"
 export STUDIO_STORE_ID="$SSID"
 export STUDIO_MODEL_ID="$SMID"
+export OPTIONB_BASE="http://127.0.0.1:8124"
 "$PY" -m pytest "$ROOT/tests/e2e_authz" -v
 echo "== ALL GREEN =="

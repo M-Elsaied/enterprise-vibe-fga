@@ -79,6 +79,10 @@ class ContextualOpenFgaAuthorizer(OpenFgaAuthorizer):
     async def authorize(self, actor: Dict[str, Any], action: str,
                         resource: Dict[str, Any]) -> bool:
         uid, groups_str = self._split_identity(actor.get("id"))
+        # Empty/whitespace identity -> deny (never send an invalid "user:" to
+        # OpenFGA, which would raise a 500). Fail closed.
+        if not uid:
+            return False
         roles = self._roles_for(groups_str)
         clean_actor = self._clean_actor(actor, uid)
 
@@ -104,6 +108,8 @@ class ContextualOpenFgaAuthorizer(OpenFgaAuthorizer):
     async def list(self, actor: Dict[str, Any], relation: str,
                    resource: Dict[str, Any]) -> List[str]:
         uid, groups_str = self._split_identity(actor.get("id"))
+        if not uid:
+            return []
         roles = self._roles_for(groups_str)
         clean_actor = self._clean_actor(actor, uid)
         if not roles:

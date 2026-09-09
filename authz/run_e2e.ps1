@@ -61,6 +61,7 @@ try {
     $ssid = (& $fga store create --name studio-e2e | ConvertFrom-Json).store.id
     Push-Location (Join-Path $root "authz\model")
     $smid = (& $fga model write --store-id $ssid --file core.fga.mod --format modular | ConvertFrom-Json).authorization_model_id
+    & $fga model get --store-id $ssid --format json | Out-File -Encoding ascii "$logs\studio-model.json"
     Pop-Location
     $sw = & $fga tuple write --store-id $ssid --file (Join-Path $root "authz\seed\studio-structural.yaml") | ConvertFrom-Json
     if ($sw.failed.Count -gt 0) { throw "studio structural seeding had failures" }
@@ -111,12 +112,39 @@ try {
         }
     }
 
+    # ---- 4c. Option B server: neuro-san wired to the contextual authorizer --
+    # Studio profile, studio store (structural only - NO roles persisted). Roles
+    # arrive in the group-encoded user_id header and are injected as contextual
+    # tuples by ContextualOpenFgaAuthorizer. Proves Option B on the real runtime.
+    Write-Host "== starting Option B server (contextual authorizer) =="
+    $env:PYTHONPATH = $root                       # so 'authz.enforcement...' imports
+    $env:AGENT_AUTHORIZER = "authz.enforcement.contextual_authorizer.ContextualOpenFgaAuthorizer"
+    $env:AGENT_AUTHORIZER_ALLOW_RELATION = "can_execute"   # studio/core invoke verb
+    $env:FGA_STORE_NAME = "studio-e2e"
+    $env:FGA_MODEL_ID = $smid
+    $env:FGA_POLICY_FILE = "$logs\studio-model.json"
+    $optionBProc = Start-Process -FilePath $python -ArgumentList `
+        "-m","neuro_san.service.main_loop.server_main_loop","--http_port","8124" `
+        -WorkingDirectory $root `
+        -RedirectStandardOutput "$logs\optionb.out.log" -RedirectStandardError "$logs\optionb.err.log" `
+        -PassThru -WindowStyle Hidden
+    $deadline = (Get-Date).AddSeconds(90)
+    while ($true) {
+        try { $null = Invoke-WebRequest "http://127.0.0.1:8124/readyz" -UseBasicParsing -TimeoutSec 2; break }
+        catch {
+            if ($optionBProc.HasExited) { throw "Option B server exited early; see $logs\optionb.err.log" }
+            if ((Get-Date) -gt $deadline) { throw "Option B server did not become ready" }
+            Start-Sleep 2
+        }
+    }
+
     # ---- 5. E2E suite ------------------------------------------------------
     Write-Host "== pytest tests\e2e_authz =="
     $env:E2E_BASE = "http://127.0.0.1:$HttpPort"
     $env:ADMIN_BASE = "http://127.0.0.1:8300"
     $env:STUDIO_STORE_ID = $ssid
     $env:STUDIO_MODEL_ID = $smid
+    $env:OPTIONB_BASE = "http://127.0.0.1:8124"
     & $python -m pytest (Join-Path $root "tests\e2e_authz") -v
     if ($LASTEXITCODE -ne 0) { throw "E2E tests failed" }
     Write-Host "== ALL GREEN =="
@@ -124,10 +152,11 @@ try {
 finally {
     if (-not $KeepUp) {
         Write-Host "== teardown =="
+        if ($optionBProc -and -not $optionBProc.HasExited) { Stop-Process -Id $optionBProc.Id -Force }
         if ($adminProc -and -not $adminProc.HasExited) { Stop-Process -Id $adminProc.Id -Force }
         if ($serverProc -and -not $serverProc.HasExited) { Stop-Process -Id $serverProc.Id -Force }
         if ($fgaProc -and -not $fgaProc.HasExited) { Stop-Process -Id $fgaProc.Id -Force }
     } else {
-        Write-Host "KeepUp: openfga pid $($fgaProc.Id), server pid $($serverProc.Id), admin pid $($adminProc.Id)"
+        Write-Host "KeepUp: openfga pid $($fgaProc.Id), full-profile server pid $($serverProc.Id), admin pid $($adminProc.Id), Option-B server pid $($optionBProc.Id)"
     }
 }
