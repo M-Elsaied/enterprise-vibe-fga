@@ -51,6 +51,12 @@ class StudioAuthzClient:
         return user_id if user_id.startswith("user:") else f"user:{user_id}"
 
     @staticmethod
+    def _as_object(value: str) -> str:
+        # A bare Entra oid (no ':') is a user; an already-typed value
+        # (tenant:alpha, group:x#member) is passed through untouched.
+        return value if ":" in value else f"user:{value}"
+
+    @staticmethod
     def _contextual(user_id: str, roles: Optional[RoleMemberships]) -> Optional[Dict]:
         if not roles:
             return None
@@ -104,3 +110,45 @@ class StudioAuthzClient:
             body["contextual_tuples"] = contextual
         objects = self._post("/list-objects", body).get("objects", [])
         return sorted(obj.split(":", 1)[1] for obj in objects)
+
+    # -------------------------------------------------- read primitives (inspector)
+    def check_relation(self, subject: str, relation: str, obj: str,
+                       roles: Optional[RoleMemberships] = None) -> bool:
+        """Raw Check on any relation/object. `subject` may be a bare oid or an
+        already-typed user (tenant:alpha, group:x#member). Contextual-aware."""
+        body: Dict = {"tuple_key": {"user": self._as_object(subject),
+                                    "relation": relation, "object": obj}}
+        # Contextual tuples only make sense for a real user subject.
+        if ":" not in subject:
+            contextual = self._contextual(subject, roles)
+            if contextual:
+                body["contextual_tuples"] = contextual
+        return bool(self._post("/check", body).get("allowed"))
+
+    def expand(self, relation: str, obj: str) -> Dict:
+        """The grant TREE for a relation on an object (the 'why').
+
+        NOTE: OpenFGA Expand does not accept contextual tuples, so in Option B
+        mode the tree reflects the PERSISTED graph only - the allow/deny verdict
+        (from check_relation) stays exact in both modes, the tree is the
+        structural explanation.
+        """
+        return self._post("/expand", {
+            "tuple_key": {"relation": relation, "object": obj}}).get("tree", {})
+
+    def list_users(self, obj_type: str, obj_id: str, relation: str) -> List[str]:
+        """Which user ids hold `relation` on the object (reverse of check).
+
+        Persisted holders only (Expand/ListUsers over the stored graph); in
+        Option B nothing about users is persisted, so this is a persisted-mode
+        answer - documented for the inspector's who-can view.
+        """
+        body: Dict = {"object": {"type": obj_type, "id": obj_id},
+                      "relation": relation, "user_filters": [{"type": "user"}]}
+        out: List[str] = []
+        for entry in self._post("/list-users", body).get("users", []):
+            if "object" in entry:
+                out.append(entry["object"]["id"])
+            elif "wildcard" in entry:
+                out.append("*")
+        return sorted(out)

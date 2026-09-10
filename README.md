@@ -14,6 +14,47 @@ Everything here is verified end to end: model-layer tests run against the FGA CL
 engine, and a live E2E suite runs a real OpenFGA server plus a real neuro-san server and
 asserts allow/deny per persona over HTTP.
 
+## At a glance
+
+**What it is.** An [OpenFGA](https://openfga.dev) authorization layer for the neuro-san
+agent platform. Teams are isolated **tenants** on one shared cluster; roles come from **IdP
+groups**; every request is one check the runtime enforces (allow / **403**). Two
+**profiles**: **studio** (four-role ladder, roles delivered per request from group claims -
+"Option B", nothing about users persisted) and **full** (adds marketplace publishing,
+connectors, LLM entitlements). The studio profile is the default focus below.
+
+**What it does (capabilities)**
+- **Structural tenant isolation** - no tuple path, no access; nothing to forget to check.
+- **Four-role ladder per tenant** (super_admin / admin / developer / analyst); one person
+  can be a developer in one team and an analyst in another at the same time.
+- **Roles from IdP groups** via a naming convention (`NSAN-<TEAM>-<ROLE>`) - onboard a team
+  with a tenant tuple + three groups, **zero code**.
+- **Runtime enforcement with no fork** of neuro-san (the authorizer is chosen by env var);
+  Check + ListObjects.
+- **Governed admin API** - every write is itself FGA-checked and audited - plus a
+  **read-only authorization inspector** (effective permissions + the grant-tree "why").
+- **Everything is proven**: model-layer suites (grants *and* denials) + **76 live E2E
+  tests** against a real OpenFGA and a real neuro-san server over HTTP.
+
+**Known limitations (each also flagged where it bites)**
+- **You bring identity.** The repo ships a *demo* SSO gateway; header trust/stripping and
+  Entra **group-name** claims (Entra emits GUIDs by default) are your proxy's job - see
+  *Deploying to your own environment*.
+- **Role assignment lives in the IdP, by design** - there is **no in-app "add user to
+  role" screen**. SCIM sync + Entra governance are yours to run (`authz/scim_sync.py` is a
+  reference) - see *Assigning people to roles at scale*.
+- **`FGA_MODEL_ID` is not honored per request** by neuro-san 0.6.94 (pin-the-latest or a
+  one-line patch) - see the read-path caveat.
+- **Not built here yet**: the marketplace publish workflow, per-tenant BYOM key storage,
+  and production assurance jobs. In Option B, the inspector's `who_can` / grant-tree show
+  *persisted* holders only (roles are never persisted in that mode).
+- The demo runs an **in-memory** store; in production you operate a **persistent OpenFGA**
+  (Postgres).
+
+**What you must provide for production**: a cluster, a persistent OpenFGA, your **OIDC
+proxy** (Entra / mod_auth_openidc), and the **group->role governance**. Step by step:
+*Taking this to production*.
+
 ## The objective
 
 Picture an enterprise agent platform: one shared cluster, ~100 teams, 500+ employees.
@@ -104,8 +145,8 @@ the image wiring (`deploy/Dockerfile` copies `authz/` and bakes in `openfga-sdk`
 `.env.example` contract, and a CI gate (`.github/workflows/authz.yml`). What you still
 bring: your cluster, a persistent OpenFGA, and your OIDC proxy (the repo's demo gateway is
 the stand-in for it). Not built here yet: the marketplace publish workflow, per-tenant key
-storage, and the production assurance jobs (shadow checks, reconcile, tripwire) - designed
-in `authz/README.md`.
+storage, and the production assurance jobs (shadow checks, tripwire; the IdP->tuple
+reconcile has a reference in `authz/scim_sync.py`) - designed in `authz/README.md`.
 
 ## What the model gives you
 
@@ -329,6 +370,7 @@ authorization system authorizes its own administration:
 | Create tenant (born with an admin group) | `POST /tenants` | `super_admin` on the platform |
 | Add / remove member (exception path) | `POST/DELETE /tenants/{t}/members` | `can_administer` on the tenant |
 | Promote / demote admin | `POST/DELETE /tenants/{t}/admins` | `can_administer` on the tenant |
+| Direct ladder-role grant (exception path) | `POST/DELETE /tenants/{t}/direct-grants` | `can_administer` on the tenant |
 | Group membership (steady-state path) | `POST/DELETE /idp/groups/{g}/members` | admin of a tenant the group is bound to, or super admin |
 | Access review (recertification sweep) | `GET /tenants/{t}/access-review` | `can_administer` on the tenant |
 
@@ -479,13 +521,18 @@ chmod +x authz/run_e2e.sh
 
 ---
 
-**Expected output either way:** `Tests 4/4 passing`, then `63 passed`, then `ALL GREEN`.
-The 63 include the Option-B suite (`test_option_b_http_e2e.py`) that drives group-derived
-roles through a live neuro-san server wired to the contextual authorizer.
+**Expected output either way:** `Tests 4/4 passing`, then `76 passed`, then `ALL GREEN`.
+The 76 include the Option-B suite (`test_option_b_http_e2e.py`) that drives group-derived
+roles through a live neuro-san server wired to the contextual authorizer, and the inspector
+suite (`test_inspector.py`) that proves the read-only inspector's gating against live OpenFGA.
 
-If it fails, the two usual causes: the binaries aren't the pinned versions above (this repo
-uses `fga` v0.7.20 - `--format modular`, not `--input-format`), or `jq` is missing on
-macOS/Linux (`brew install jq`).
+If it fails, the usual causes: the binaries aren't the pinned versions above (this repo
+uses `fga` v0.7.20 - `--format modular`, not `--input-format`); `jq` is missing on
+macOS/Linux (`brew install jq`); or you're not on **Python 3.12** (recreate `.venv` with
+`py -3.12`). If a launcher (`studio_demo.py` / `admin_api.py`) exits with **`SSL:
+WRONG_VERSION_NUMBER`**, your `FGA_API_URL` is `https://` but the local OpenFGA speaks plain
+**HTTP** - set it to `http://127.0.0.1:18080`. The launchers now pre-check this and print a
+one-line fix instead of a traceback.
 
 ### Test it yourself from a front end
 
@@ -513,6 +560,16 @@ the full verb matrix - networks, tools, special-agent access, create rights - re
 through the real enforcement library (group names -> contextual tuples -> Check/ListObjects).
 The `prod mode` persona sends no dev headers and collapses to anonymous, proving the
 `OPENFGA_DEV_IDENTITY` flag is the only door.
+
+**Authorization inspector panel.** Below the matrix, the console embeds a read-only
+inspector (a front end over the same `AuthorizationInspector` the admin API mounts): pick a
+**subject** and a **resource**, and it shows the effective verb set, an allow/deny verdict
+with the **grant tree** (the "why"), and a who-can lookup. The **caller is the active
+persona**, so the inspector's own gating is visible - switch the top persona to an analyst,
+or to another tenant's admin, and it refuses (only an admin/super_admin of the owning tenant
+may inspect it). It is *not* role assignment - that stays in the IdP. Like the rest of the
+console it is dev-only (gated by `OPENFGA_DEV_IDENTITY`); the production inspector surface is
+the admin API's `/inspect/*` endpoints.
 
 *(The older full-profile console `authz\demo_ui.py` on :8200, with marketplace personas
 sam / ada / alice / bob / eve, still exists for the full profile.)*
@@ -653,6 +710,77 @@ The model modules, the enforcement library, both authorizers, `resource_map` (th
 write/check type-safety invariant), and the group-name convention. Those are the
 authorization system; the demo only swaps the *data* and the *identity source* around them.
 
+## Assigning people to roles at scale (the identity & governance supply chain)
+
+The model is the enforcement *engine*. Deciding **who gets which role, in which team, and
+for how long** is a supply-chain problem that the industry has converged on a clear answer
+for - and most of it lives in your IdP and proxy, *not* in this codebase. The one-line
+principle every mature platform follows: **the IdP is the source of truth for identity and
+membership, but the app authorizes against its own materialized copy - never off raw token
+claims - and assignment is a governed, time-bound, reviewable workflow, not a manual group
+edit.** This repo already is the right engine; below is what you run around it, and the
+thin repo-side helpers that meet it halfway.
+
+| Concern | Industry best practice (who does it) | Where it lives | In this repo |
+|---|---|---|---|
+| **Don't authorize off tokens/headers** | Groups in tokens are capped (Entra ~200 JWT / 150 SAML / ~6 implicit; Okta ~100) and headers 431 at ~8 KB. Assign groups **to app roles** / key off the immutable `oid`. "Tokens are for identity, not authorization." | **Your IdP + proxy** | Mapper keys off `oid` and ignores unknown groups; cap group headers - see below |
+| **Provisioning: SCIM sync + reconcile** | IdP pushes users/groups via **SCIM 2.0** (or a scheduled Graph pull); the app stores a local copy and authorizes against *that*; a **daily reconcile** corrects drift (GitHub/Snowflake/Slack/Databricks) | **Your IdP + a sync job** | `authz/scim_sync.py` - a reference sync+reconcile against the same convention |
+| **Per-tenant scoped roles** | A role is a tuple on the scope object (`tenant:T#developer@user:U`); "developer in A, analyst in B" is two scoped grants (Zanzibar family) | **This repo (done)** | The core model - proven by the multi-team persona `mia` |
+| **Additive-union vs deny** | Additive-union is the default (GitHub/GitLab/K8s/Snowflake); high-blast-radius systems add an **evaluated-first deny** (Google Cloud IAM Deny, OpenFGA `but not`) for suspension/legal-hold | **This repo (reserved)** | Reserved `but not blocked` hook documented in `modules/resources.fga` |
+| **Governed assignment** | **Entra Entitlement Management** access packages (delegated self-service + approval + expiry), **PIM/JIT** for admin/super_admin, **Access Reviews**, **SoD** (SailPoint/Saviynt) | **Your IdP - no app UI** | Deliberately none: no in-app "add to role" button |
+| **Group creation IS access granting** | Lock down who can create/name the role groups; the naming convention is a **protected namespace** (Entra `Users can create security groups = No`, delegate via Privileged Role Admin) | **Your IdP tenant policy** | Atomic onboarding keeps group→role binding on one controlled path |
+
+**What you configure downstream (not in this repo):**
+
+1. **Token/header transport.** Emit the immutable **`oid`** as the user id everywhere, and
+   the `NSAN-<TEAM>-<ROLE>` **group names** (not GUIDs) in the claim/header. For large
+   tenants, prefer **app roles** (compact, tenant-stable `roles` claim) or drop to
+   OID-only + the synced store (next point) so you never hit the group cap or the ~8 KB
+   header limit. Never put roles you can't fit in a header - materialize them instead.
+2. **SCIM / provisioning.** Stand up a real SCIM endpoint or a scheduled Graph job that
+   feeds membership in, and run reconcile on a cadence (daily is the common choice).
+   `authz/scim_sync.py` is the **reference** for the shape - it maps a `group -> members`
+   feed to persisted role tuples through the *same* `GroupMapper` convention and prunes
+   drift; harden it (auth, paging, alerting) or replace it with your IdP's SCIM app.
+3. **Governed assignment.** Put role assignment in **Entra Entitlement Management**:
+   analyst/developer as self-service **access packages** (team admin approves, time-boxed,
+   quarterly access review); admin/super_admin held **PIM-eligible** and activated
+   just-in-time with approval + MFA. This is why there is **no role-assignment screen** in
+   the app - a second assignment path would be a second source of truth and would re-open
+   the group-creation boundary below.
+4. **Group-creation lockdown.** Because a group's *name* is the authorization mapping,
+   restrict who can create `NSAN-*` groups (Entra tenant setting; delegate only via a
+   privileged role). Treat the namespace as protected: whoever can mint a group can mint
+   access.
+
+**What this repo adds to meet that halfway:**
+
+- **Authorization inspector** (`authz/enforcement/inspector.py`, mounted read-only on the
+  admin API): the visibility no IdP screen gives you - **effective** permission after the
+  ladder + inheritance resolve. `resource_access` (a subject's verb set on a resource),
+  `explain` (allow/deny **plus the grant tree** - the *why*), `who_can` (reverse lookup).
+  Every call is itself authorization-gated against OpenFGA: only an **admin/super_admin of
+  the owning tenant** may inspect it, and a resource is only inspectable through the tenant
+  that owns it (no cross-tenant peeking). This is the app-side surface admins actually need
+  - and it is read-only. Shipped as the admin API's `/inspect/*` endpoints; the persona
+  console (`studio_demo.py`) embeds a dev-only visual **panel** over the same library.
+- **Atomic tenant onboarding** (`POST /tenants/{tenant}/onboard`, super_admin only): binds
+  the `tenant -> platform` link **and** the three convention groups to the ladder roles in
+  one atomic write, so a tenant is never half-provisioned and group creation stays on one
+  governed path. (Option B needs only the structural link - `Provisioner.provision_tenant`
+  - because roles arrive per request.)
+- **Reserved deny hook**: `but not blocked` documented in `modules/resources.fga` so a
+  future suspension/legal-hold guardrail is added as a first-class exclusion, not improvised.
+
+The narrow write surface for anything the IdP group model can't express (contractor /
+break-glass direct grants via `POST /tenants/{t}/direct-grants`; per-object grants when
+needed) stays behind the FGA-checked, audited admin API - it is the **exception lane**, not
+routine ladder-role assignment.
+
+> **The hybrid, in depth:** how role tuples are delivered (Option B contextual vs persisted
+> vs direct exceptions), why the multi-team case works in all of them, how it scales, and
+> exactly what to change to adopt Option B - see **[docs/authorization-modes.md](docs/authorization-modes.md)**.
+
 ## What this change adds (file tree)
 
 Everything below is introduced by this repo; every file not shown is the unmodified
@@ -672,9 +800,11 @@ enterprise-vibe-fga/
 |   |   |-- group_mapper.py            NSAN-<TEAM>-<ROLE> group names -> roles
 |   |   |-- context_builder.py         roles -> per-request contextual tuples
 |   |   |-- middleware.py              trusted-header identity (Starlette)
-|   |   |-- client.py                  Check / ListObjects
-|   |   |-- provision.py               structural parent writes (single-owner)
+|   |   |-- client.py                  Check / ListObjects / Expand / ListUsers
+|   |   |-- inspector.py               read-only visibility (resource_access/explain/who_can)
+|   |   |-- provision.py               structural writes + atomic tenant onboarding
 |   |   |-- dev_identity.py            flag-gated persona testing
+|   |   |-- preflight.py               friendly OpenFGA reachability check for the launchers
 |   |   `-- contextual_authorizer.py   Option B runtime AGENT_AUTHORIZER (the carrier)
 |   |-- model/model.json               generated FGA_POLICY_FILE (by bootstrap; gitignored)
 |   |-- tests/
@@ -689,8 +819,9 @@ enterprise-vibe-fga/
 |   |-- run_e2e.ps1                    one-command end-to-end run (Windows)
 |   |-- run_e2e.sh                     NEW  one-command end-to-end run (macOS/Linux)
 |   |-- requirements-authz.txt         minimal python deps
-|   |-- admin_api.py                   onboarding/membership API, FGA-checked (:8300)
-|   |-- studio_demo.py                 studio persona console (:8400)
+|   |-- admin_api.py                   onboarding/membership + inspector API, FGA-checked (:8300)
+|   |-- scim_sync.py                   NEW  reference IdP->OpenFGA role sync + reconcile (stub)
+|   |-- studio_demo.py                 studio persona console + inspector panel (:8400)
 |   |-- demo_ui.py / studio_gateway.py / install_studio_widget.py   dev front-end scaffolding
 |   `-- README.md                      layer docs: test layers, runbook, keep/discard
 |-- deploy/Dockerfile             MOD  COPYs authz/ + bakes in openfga-sdk
@@ -702,8 +833,11 @@ enterprise-vibe-fga/
 |   |-- test_admin_api_e2e.py          12 onboarding tests incl. grant->200 / revoke->403
 |   |-- test_studio_profile_e2e.py     studio ladder + isolation live vs OpenFGA
 |   |-- test_option_b_http_e2e.py      Option B through a live runtime (contextual authorizer)
-|   `-- test_studio_units.py           mapper/resource_map/authorizer unit tests
+|   |-- test_inspector.py              inspector gating + explain-matches-enforcement (live)
+|   |-- test_direct_grants_e2e.py      exception-lane direct grants: grant->200 / revoke->403 (live)
+|   `-- test_studio_units.py           mapper/resource_map/authorizer/onboarding/scim unit tests
 `-- docs/
+    |-- authorization-modes.md    NEW   Option B vs persisted vs direct grants: the hybrid, in depth
     |-- UPSTREAM-README.md        MOVED  original neuro-san-studio README
     `-- images/studio-*.png       NEW   the studio-profile screenshots above
 ```
@@ -721,23 +855,24 @@ enterprise-vibe-fga/
    invoke `user:*`-published networks. Authentication in front of the runtime is mandatory;
    whatever SSO layer you deploy must strip and re-set the header from the verified token.
 6. **Authorization runs before existence**: probing an unknown network returns 403, not 404.
-7. **Catalog objects need their platform link tuple** (`platform:vibe platform llm_model:X`)
+7. **Catalog objects need their platform link tuple** (`platform:main platform llm_model:X`)
    or super-admin inheritance silently fails. Found by the model test suite.
 
-## Repo layout
+## Where to look (quick map)
 
-```
-authz/model/          fga.mod + core / agents / connectors / entitlements modules
-authz/tests/          *.fga.yaml - model tests (fga model test); gated in CI by .github/workflows/authz.yml
-authz/seed/           tuples.yaml - demo personas and grants
-authz/run_e2e.ps1     one-command end-to-end run
-registries/vibe/      three demo tenant networks (alpha--private, alpha--public, beta--internal)
-tests/e2e_authz/      pytest suite against the live stack (18 assertions)
-docs/UPSTREAM-README.md   the original neuro-san-studio README
-```
+| You want... | Go to |
+|---|---|
+| The policy (the model) | `authz/model/` - `core.fga.mod` (studio) / `full.fga.mod`, modules under `modules/` |
+| The enforcement code | `authz/enforcement/` - group mapper, context builder, client, inspector, both authorizers |
+| The governed writes | `authz/admin_api.py` - onboarding, membership, inspector (:8300) |
+| Model-layer tests | `authz/tests/*.fga.yaml` - `fga model test`, grants AND denials; CI-gated |
+| Live E2E tests | `tests/e2e_authz/` - **76 tests** against the running stack |
+| Run everything | `authz/run_e2e.ps1` (Windows) / `authz/run_e2e.sh` (macOS/Linux) |
+| The full file tree | *What this change adds* above |
 
-Demo personas: `sam` (platform super admin), `ada` (tenant alpha admin), `alice` (alpha
-member, builder), `bob` (beta member), `eve` (authenticated stranger with zero grants).
+Personas: the studio-profile set (**adam / dina / ana / bob / gil / dora / mia / sam /
+eve**) is defined in *The proof: the studio, per persona* above; the older full-profile set
+(`sam` / `ada` / `alice` / `bob` / `eve`) is used by the nsflow demo.
 
 ## Provenance and license
 

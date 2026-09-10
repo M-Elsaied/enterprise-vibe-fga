@@ -11,6 +11,8 @@ from enforcement import resource_map  # noqa: E402
 from enforcement.context_builder import build_contextual_tuples  # noqa: E402
 from enforcement.dev_identity import resolve_dev_identity  # noqa: E402
 from enforcement.group_mapper import GroupMapper, RoleMemberships  # noqa: E402
+from enforcement.provision import onboard_tuples  # noqa: E402
+import scim_sync  # noqa: E402
 
 
 # ---------------------------------------------------------------- group mapper
@@ -123,3 +125,55 @@ def test_contextual_authorizer_identity_group_split():
     # no delimiter -> plain user id, persisted mode still works
     assert C._split_identity("abc-oid") == ("abc-oid", "")
     assert C._split_identity(None) == ("", "")
+
+
+# --------------------------------------------------- atomic tenant onboarding
+
+def test_onboard_tuples_bind_convention_groups():
+    # onboarding is the platform link PLUS the three convention groups bound to
+    # the ladder roles - one atomic write (see Provisioner._write_many).
+    tuples = onboard_tuples("alpha", platform="main")
+    assert {"user": "platform:main", "relation": "platform",
+            "object": "tenant:alpha"} in tuples
+    assert {"user": "group:NSAN-ALPHA-ADMINS#member", "relation": "admin",
+            "object": "tenant:alpha"} in tuples
+    assert {"user": "group:NSAN-ALPHA-DEVELOPERS#member", "relation": "developer",
+            "object": "tenant:alpha"} in tuples
+    assert {"user": "group:NSAN-ALPHA-ANALYSTS#member", "relation": "analyst",
+            "object": "tenant:alpha"} in tuples
+    assert len(tuples) == 4
+    # the group names the onboarding writes must map back through the SAME
+    # convention the request path uses - onboarding and enforcement can't drift.
+    roles = GroupMapper().map_groups(
+        ["NSAN-ALPHA-ADMINS", "NSAN-ALPHA-DEVELOPERS", "NSAN-ALPHA-ANALYSTS"])
+    assert roles.memberships == frozenset(
+        {("alpha", "admin"), ("alpha", "developer"), ("alpha", "analyst")})
+
+
+# ------------------------------------------------- SCIM/IdP reference sync stub
+
+def test_scim_desired_from_feed_uses_the_convention():
+    feed = {
+        "NSAN-ALPHA-DEVELOPERS": ["oid-dina"],
+        "NSAN-BETA-ANALYSTS": ["oid-bob"],
+        "NSAN-SUPERADMINS": ["oid-sam"],
+        "Random-Unmapped-Group": ["oid-noise"],   # ignored, like the request path
+    }
+    desired = scim_sync.desired_from_feed(feed, platform="main")
+    assert ("user:oid-dina", "developer", "tenant:alpha") in desired
+    assert ("user:oid-bob", "analyst", "tenant:beta") in desired
+    assert ("user:oid-sam", "super_admin", "platform:main") in desired
+    # the unmapped group contributes nothing
+    assert not any(t[0] == "user:oid-noise" for t in desired)
+
+
+def test_scim_plan_sync_adds_missing_and_prunes_drift():
+    feed = {"NSAN-ALPHA-DEVELOPERS": ["oid-dina"]}
+    # current store holds a stale grant the feed no longer justifies (leaver)
+    current = [
+        ("user:oid-dina", "developer", "tenant:alpha"),   # still justified
+        ("user:oid-gone", "developer", "tenant:alpha"),   # drift -> must be pruned
+    ]
+    adds, deletes = scim_sync.plan_sync(feed, current, platform="main")
+    assert adds == []                                        # already present
+    assert deletes == [("user:oid-gone", "developer", "tenant:alpha")]

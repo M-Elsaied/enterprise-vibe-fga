@@ -15,7 +15,9 @@ from .client import StudioAuthzClient
 from .context_builder import build_contextual_tuples, platform_id
 from .dev_identity import is_enabled as dev_identity_enabled
 from .group_mapper import GroupMapper, RoleMemberships
+from .inspector import AuthorizationInspector, InspectorForbidden
 from .middleware import IdentityMiddleware, RequestIdentity, get_identity
+from .preflight import assert_openfga_reachable
 from .provision import Provisioner
 from . import resource_map
 
@@ -26,6 +28,8 @@ from . import resource_map
 __all__ = [
     "StudioAuthzClient", "build_contextual_tuples", "platform_id",
     "dev_identity_enabled", "GroupMapper", "RoleMemberships",
+    "AuthorizationInspector", "InspectorForbidden",
     "IdentityMiddleware", "RequestIdentity", "get_identity",
+    "assert_openfga_reachable",
     "Provisioner", "resource_map",
 ]

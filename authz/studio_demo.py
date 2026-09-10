@@ -23,7 +23,9 @@ from fastapi.responses import HTMLResponse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from enforcement import StudioAuthzClient  # noqa: E402
+from enforcement import (  # noqa: E402
+    AuthorizationInspector, GroupMapper, InspectorForbidden, StudioAuthzClient,
+    assert_openfga_reachable)
 from enforcement.middleware import IdentityMiddleware  # noqa: E402
 
 FGA = os.environ.get("FGA_API_URL", "http://127.0.0.1:18080")
@@ -97,6 +99,48 @@ def overview(request: Request):
     }
 
 
+@app.get("/api/inspect")
+def inspect(request: Request, subject: str = "", subject_groups: str = "",
+            tenant: str = "", resource: str = "", action: str = "execute"):
+    """Read-only inspector, driven by the REAL AuthorizationInspector.
+
+    The CALLER is the active persona (its X-Dev-* headers set identity via the
+    middleware), so the panel demonstrates the gating live: an analyst/developer/
+    stranger caller is refused; an admin can only inspect their own tenant.
+    The SUBJECT (whose access is being examined) is chosen separately; its groups
+    are mapped to contextual roles so the verdict is exact in Option B.
+    """
+    identity = request.state.identity
+    if not identity.is_authenticated:
+        return {"gated": False,
+                "reason": "caller is anonymous (no dev identity / SSO) - inspector refused"}
+    caller = identity.user_id
+    caller_roles = identity.roles
+    sub_roles = None
+    if subject_groups:
+        sub_roles = GroupMapper().map_groups(
+            [g.strip() for g in subject_groups.split(",") if g.strip()])
+    insp = AuthorizationInspector(client())
+    try:
+        access = insp.resource_access(caller, subject, resource, tenant,
+                                      caller_roles=caller_roles, subject_roles=sub_roles)
+        explain = insp.explain(caller, subject, action, resource, tenant,
+                               caller_roles=caller_roles, subject_roles=sub_roles)
+        who = insp.who_can(caller, "read", resource, tenant, caller_roles=caller_roles)
+    except InspectorForbidden as err:
+        return {"gated": False, "caller": caller, "reason": str(err)}
+    return {
+        "gated": True, "caller": caller, "subject": subject, "tenant": tenant,
+        "resource": access["resource"],
+        "subject_roles": sorted(f"{t}:{r}" for t, r in (sub_roles.memberships if sub_roles else []))
+                         + (["platform:super_admin"] if sub_roles and sub_roles.super_admin else []),
+        "access": access["access"],
+        "explain": {"action": action, "relation": explain["relation"],
+                    "allowed": explain["allowed"], "tree": explain["tree"]},
+        "who": who["who"],
+    }
+
+
 PAGE = """<!doctype html>
 <html><head><meta charset="utf-8"><title>Studio RBAC Persona Console</title>
 <style>
@@ -114,6 +158,20 @@ PAGE = """<!doctype html>
  .roles { color:#7ee1f5; font-family:Consolas,monospace; font-size:.85rem; margin:.4rem 0 0; }
  pre { background:#161b22; border:1px solid #30363d; border-radius:10px; padding:1rem; font-size:.75rem;
    color:#9ecbff; overflow-x:auto; margin-top:1.4rem; }
+ .panel { background:#0f151d; border:1px solid #30363d; border-radius:12px; padding:1.1rem 1.2rem; margin-top:1.6rem; }
+ .panel h2 { font-size:1rem; margin:0 0 .2rem; } .panel .sub { margin-bottom:.9rem; }
+ .controls { display:flex; flex-wrap:wrap; gap:.6rem; align-items:center; }
+ .controls label { font-size:.72rem; color:#8b949e; display:flex; flex-direction:column; gap:.2rem; }
+ .controls select { background:#161b22; color:#e6edf3; border:1px solid #30363d; border-radius:8px; padding:.4rem .5rem; }
+ .controls button { background:#1f6feb; color:#fff; border:0; border-radius:8px; padding:.55rem 1.1rem;
+   cursor:pointer; align-self:flex-end; font-weight:600; }
+ .banner { border-radius:8px; padding:.6rem .8rem; margin:1rem 0 .4rem; font-size:.85rem; }
+ .banner.allow { background:#0d2a14; border:1px solid #1a7f37; color:#7ee787; }
+ .banner.deny  { background:#2d0f13; border:1px solid #f85149; color:#ff9a91; }
+ .verbs { margin:.5rem 0; } .verbs .lbl { color:#8b949e; font-size:.75rem; margin-right:.4rem; }
+ .tree { background:#0b0f14; border:1px solid #30363d; border-radius:8px; padding:.7rem; font-size:.72rem;
+   color:#9ecbff; overflow-x:auto; max-height:220px; margin-top:.4rem; }
+ .note { color:#8b949e; font-size:.72rem; margin-top:.3rem; }
 </style></head><body>
 <h1>Studio RBAC Persona Console</h1>
 <div class="sub">Four-role ladder, multi-tenant, Option B: every click sends the persona's
@@ -122,6 +180,25 @@ The <b>prod mode</b> persona proves the dev flag is the only door.</div>
 <div class="personas" id="bar"></div>
 <div class="roles" id="roles"></div>
 <div class="grid" id="grid"></div>
+
+<div class="panel">
+  <h2>Authorization inspector <span style="color:#8b949e;font-weight:400">(read-only)</span></h2>
+  <div class="sub">Answers "can <b>subject</b> do X on this resource, and why" - the effective
+  permission after the ladder resolves. The <b>caller is the active persona above</b>, so the
+  inspector is itself gated: only an <b>admin/super_admin of the owning tenant</b> may inspect it.
+  Switch the top persona to an analyst or another tenant's admin and watch it refuse. This is
+  NOT role assignment (that lives in the IdP).</div>
+  <div class="controls">
+    <label>Subject<select id="i-subject"></select></label>
+    <label>Resource<select id="i-target"></select></label>
+    <label>Action<select id="i-action">
+      <option>execute</option><option>read</option><option>update</option><option>delete</option>
+    </select></label>
+    <button onclick="inspect()">Inspect</button>
+  </div>
+  <div id="i-out"></div>
+</div>
+
 <pre id="raw"></pre>
 <script>
 const PERSONAS = [
@@ -175,7 +252,74 @@ function render() {
     bar.appendChild(b);
   }
 }
-render(); refresh();
+// ---- inspector panel -------------------------------------------------------
+const TARGETS = [
+ ["alpha--private", "alpha"],
+ ["alpha--public",  "alpha"],
+ ["beta--internal", "beta"],
+ ["gamma--research", "gamma"],
+ ["delta--onboarding", "delta"],
+];
+function callerHeaders() {
+  const p = PERSONAS.find(x => x[0] === current);
+  const h = {};
+  if (p && p[0] !== null) { h["X-Dev-User"] = p[0]; h["X-Dev-Groups"] = p[2]; }
+  return h;
+}
+function populateInspector() {
+  const subj = document.getElementById("i-subject");
+  subj.innerHTML = "";
+  for (const [id, label, groups] of PERSONAS) {
+    if (id === null) continue;                    // 'prod mode' is a caller state, not a subject
+    const o = document.createElement("option");
+    o.value = id; o.dataset.groups = groups || ""; o.textContent = `${id} - ${label}`;
+    subj.appendChild(o);
+  }
+  const tgt = document.getElementById("i-target");
+  tgt.innerHTML = "";
+  for (const [res, tenant] of TARGETS) {
+    const o = document.createElement("option");
+    o.value = res; o.dataset.tenant = tenant; o.textContent = `${res}  (tenant:${tenant})`;
+    tgt.appendChild(o);
+  }
+}
+async function inspect() {
+  const subjEl = document.getElementById("i-subject");
+  const tgtEl = document.getElementById("i-target");
+  const subject = subjEl.value;
+  const subject_groups = subjEl.selectedOptions[0].dataset.groups;
+  const resource = tgtEl.value;
+  const tenant = tgtEl.selectedOptions[0].dataset.tenant;
+  const action = document.getElementById("i-action").value;
+  const qs = new URLSearchParams({subject, subject_groups, tenant, resource, action});
+  const data = await (await fetch("/api/inspect?" + qs, {headers: callerHeaders()})).json();
+  const out = document.getElementById("i-out");
+  const callerName = current === null ? "prod mode (no identity)" : current;
+  if (!data.gated) {
+    out.innerHTML = `<div class="banner deny"><b>Inspector refused for caller ${callerName}.</b>
+      ${data.reason || ""}</div>
+      <div class="note">The inspector requires admin or super_admin on the owning tenant -
+      exactly the guard that stops a developer/analyst/stranger, or a cross-tenant peek.</div>`;
+    return;
+  }
+  const verbs = Object.entries(data.access)
+    .map(([k, v]) => `<span class="chip ${v ? "ok" : "no"}">${k}</span>`).join("");
+  const ex = data.explain;
+  out.innerHTML = `
+    <div class="banner ${ex.allowed ? "allow" : "deny"}">
+      caller <b>${callerName}</b> - subject <b>${data.subject}</b> may ${ex.allowed ? "" : "NOT "}
+      <b>${ex.action}</b> ${data.resource} <span style="opacity:.7">(relation ${ex.relation})</span>
+    </div>
+    <div class="note">subject roles: ${data.subject_roles.join("  ") || "(none)"}</div>
+    <div class="verbs"><span class="lbl">effective verb set:</span>${verbs}</div>
+    <div class="lbl" style="color:#8b949e;font-size:.75rem;margin-top:.6rem">grant tree (the "why", persisted graph):</div>
+    <pre class="tree">${JSON.stringify(ex.tree, null, 2)}</pre>
+    <div class="lbl" style="color:#8b949e;font-size:.75rem">who can read ${data.resource}: ${data.who.join(", ") || "(none)"}</div>
+    <div class="note">who-can lists persisted holders only - empty here because Option B
+    persists no roles (they arrive per request); it is populated in persisted mode.</div>`;
+}
+
+render(); refresh(); populateInspector();
 </script></body></html>
 """
 
@@ -186,4 +330,5 @@ def page() -> str:
 
 
 if __name__ == "__main__":
+    assert_openfga_reachable(FGA)   # friendly hint before startup, not a traceback
     uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="warning")
