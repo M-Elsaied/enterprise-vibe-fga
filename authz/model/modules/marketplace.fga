@@ -1,0 +1,20 @@
+module marketplace
+
+# Optional module: per-object ownership + marketplace publishing.
+# Extends the core agent_network type; relations here exist ONLY in stores
+# built from full.fga.mod. Dependency direction is one-way: this module may
+# reference core/resources relations, never the reverse.
+extend type agent_network
+  relations
+    define builder: [user]                       # creator; written on create
+    define editor: [user, group#member] or builder or admin from tenant
+    # THE marketplace relation:
+    #   user:*          -> published platform-wide
+    #   tenant:X#member -> shared to one specific tenant
+    define published_to: [user:*, tenant#member]
+    # The invocation relation of the FULL profile (the studio profile uses
+    # resources.can_execute instead). Direct [user] permits exceptional grants
+    # and user:system for the scheduled-run watcher.
+    define can_invoke: [user] or editor or member from tenant or can_execute or published_to
+    define can_edit: editor or super_admin from tenant
+    define can_publish: admin from tenant or super_admin from tenant

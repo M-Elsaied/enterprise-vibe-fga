@@ -1,9 +1,42 @@
 # The authorization layer
 
-This directory holds the OpenFGA model, its tests, the demo seed state, and the E2E runner.
+This directory holds the OpenFGA model (modular, two manifests - see the root README's
+"Profiles" section), its tests, the demo seed state, the E2E runner, and the
+`enforcement/` library for the studio profile (Entra-style header identity -> group
+naming convention -> per-request contextual tuples -> Check/ListObjects; provisioning
+routed through the same `resource_map` as checking, so an object can never be written
+under one type and checked under another).
+
+Model commands (the `--format modular` flag matters - manifest names must end in
+`fga.mod` and module paths may not use `..`):
+
+```powershell
+cd authz\model
+..\..\tools\fga.exe model validate --file core.fga.mod --format modular
+..\..\tools\fga.exe model validate --file full.fga.mod --format modular
+cd ..\tests
+..\..\tools\fga.exe model test --tests studio-persisted.fga.yaml
+..\..\tools\fga.exe model test --tests studio-contextual.fga.yaml   # Option B: per-test
+                                    # tuples are sent as CONTEXTUAL tuples by the CLI
+..\..\tools\fga.exe model test --tests tenancy.fga.yaml
+```
 
 ## Getting the binaries (one time)
 
+Full first-timer setup (both OSes) is in the root README's "Getting started from scratch".
+Binaries only:
+
+macOS / Linux:
+```bash
+mkdir -p tools
+ARCH=$([ "$(uname -m)" = "arm64" ] && echo arm64 || echo amd64)
+OS=$([ "$(uname)" = "Darwin" ] && echo darwin || echo linux)
+curl -sSL "https://github.com/openfga/openfga/releases/download/v1.18.3/openfga_1.18.3_${OS}_${ARCH}.tar.gz" | tar -xz -C tools openfga
+curl -sSL "https://github.com/openfga/cli/releases/download/v0.7.20/fga_0.7.20_${OS}_${ARCH}.tar.gz"          | tar -xz -C tools fga
+chmod +x tools/openfga tools/fga
+```
+
+Windows (PowerShell):
 ```powershell
 New-Item -ItemType Directory -Force tools | Out-Null
 Invoke-WebRequest "https://github.com/openfga/openfga/releases/download/v1.18.3/openfga_1.18.3_windows_amd64.tar.gz" -OutFile tools\openfga.tar.gz
@@ -17,8 +50,9 @@ models and consistency parameters).
 
 ## The four test layers
 
-1. **Model tests** (`tests/tenancy.fga.yaml`): `fga model test` against the CLI's built-in
-   engine. Runs in CI with no server. Asserts grants AND denials: tenant isolation,
+1. **Model tests** (`tests/*.fga.yaml`): `fga model test` against the CLI's built-in
+   engine, no server needed. Gated in CI by `.github/workflows/authz.yml` (validates both
+   manifests, runs all three suites). Asserts grants AND denials: tenant isolation,
    marketplace publish (org-wide and targeted), super-admin transitivity, time-boxed
    connector access (condition context both sides of expiry), LLM and BYOM entitlements,
    and ListObjects visibility per user.

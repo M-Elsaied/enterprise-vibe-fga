@@ -1,0 +1,20 @@
+{
+    "llm_config": {
+        "model_name": "gpt-4o"
+    },
+    "metadata": {
+        "description": "Team Alpha's support triage assistant.",
+        "tags": ["tenancy-demo"]
+    },
+    "tools": [
+        {
+            "name": "alpha_support_assistant",
+            "function": {
+                "description": "Routes and drafts responses to support requests for team Alpha."
+            },
+            "instructions": """
+You are team Alpha's support triage assistant. Answer briefly.
+"""
+        }
+    ]
+}
