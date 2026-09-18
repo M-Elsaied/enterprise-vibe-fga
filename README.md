@@ -343,6 +343,17 @@ AGENT_AUTHORIZER_ALLOW_RELATION=can_execute         # studio/core profile
 # proxy sets:  user_id = "<oid>|<comma-separated NSAN group names>"
 ```
 
+Temporary (reservation) networks - the ones the Agent Network Designer creates in
+reservation mode, named `<prefix>-<uuid4>` and evicted on a timer - have no tuples by
+design, and neuro-san authorizes **before** it looks them up in the reservations storage,
+so the stock authorizer returns 403 even for a super admin. Use the reservation-aware
+authorizer, which allows reservation names locally (never contacting OpenFGA) and sends
+everything else to OpenFGA unchanged:
+
+```
+AGENT_AUTHORIZER=authz.enforcement.reservation_aware_authorizer.ReservationAwareOpenFgaAuthorizer
+```
+
 > **`FGA_MODEL_ID` caveat (upstream):** neuro-san 0.6.94 pins the model only at
 > bootstrap-write time; its per-request Check/ListObjects client is built without a model
 > id, so decisions resolve against the store's *latest* model. Guarantee the pinned model
@@ -805,7 +816,8 @@ enterprise-vibe-fga/
 |   |   |-- provision.py               structural writes + atomic tenant onboarding
 |   |   |-- dev_identity.py            flag-gated persona testing
 |   |   |-- preflight.py               friendly OpenFGA reachability check for the launchers
-|   |   `-- contextual_authorizer.py   Option B runtime AGENT_AUTHORIZER (the carrier)
+|   |   |-- contextual_authorizer.py   Option B runtime AGENT_AUTHORIZER (the carrier)
+|   |   `-- reservation_aware_authorizer.py  allows temporary (reservation) networks, rest -> OpenFGA
 |   |-- model/model.json               generated FGA_POLICY_FILE (by bootstrap; gitignored)
 |   |-- tests/
 |   |   |-- tenancy.fga.yaml           full-profile suite (grants AND denials)

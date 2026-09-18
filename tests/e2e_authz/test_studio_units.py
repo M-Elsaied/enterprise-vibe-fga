@@ -127,6 +127,35 @@ def test_contextual_authorizer_identity_group_split():
     assert C._split_identity(None) == ("", "")
 
 
+# ------------------------------------------ reservation-aware authorizer
+
+def test_reservation_names_bypass_fga_and_permanent_names_do_not():
+    # Temporary (reservation) networks are "<prefix>-<uuid4>". neuro-san
+    # authorizes BEFORE its reservation lookup, so the authorizer must allow
+    # them locally; everything else must still go to OpenFGA.
+    import asyncio
+    import uuid
+    from unittest.mock import AsyncMock, patch
+    from neuro_san.internals.authorization.openfga.open_fga_authorizer import OpenFgaAuthorizer
+    from enforcement.reservation_aware_authorizer import ReservationAwareOpenFgaAuthorizer as R
+
+    auth = R.__new__(R)   # skip the constructor: no FGA client needed for routing
+    actor = {"type": "user", "id": "some-oid"}
+
+    async def run(name):
+        with patch.object(OpenFgaAuthorizer, "authorize", new=AsyncMock(return_value=False)) as fga:
+            allowed = await auth.authorize(actor, "can_invoke", {"type": "agent_network", "id": name})
+            return allowed, fga.await_count > 0
+
+    # reservation -> allowed, OpenFGA never asked
+    assert asyncio.run(run(f"servicenow_lookup-{uuid.uuid4()}")) == (True, False)
+    assert asyncio.run(run(str(uuid.uuid4()))) == (True, False)
+    # permanent names -> delegated to OpenFGA (which said no here)
+    for name in ["alpha--private", "tools/servicenow_tickets", "agent_network_designer",
+                 f"x-{uuid.uuid1()}", "servicenow_lookup-d44e", None]:
+        assert asyncio.run(run(name)) == (False, True), name
+
+
 # --------------------------------------------------- atomic tenant onboarding
 
 def test_onboard_tuples_bind_convention_groups():
