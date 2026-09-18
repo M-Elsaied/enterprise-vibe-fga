@@ -9,6 +9,18 @@ create its tenant tuple and its three groups, and the convention does the rest.
     NSAN-<TEAM>-ANALYSTS    -> (team, analyst)
     NSAN-SUPERADMINS        -> platform super_admin (spans all tenants)
 
+Rules that are easy to get wrong - each one silently yields NO role (deny):
+  - <TEAM>, lowercased, must equal the tenant object id
+    (NSAN-Alpha-ADMINS -> tenant:alpha).
+  - The role word must be ADMINS, DEVELOPERS or ANALYSTS (case-insensitive).
+    Anything else - including singular forms such as "admin" - is ignored, even
+    with a custom OPENFGA_GROUP_PATTERN, because roles resolve via _ROLE_BY_SUFFIX.
+  - The claim/header must carry group NAMES. Object-id GUIDs never match.
+
+Used by both consumers of groups: the library middleware (separate groups
+header) and ContextualOpenFgaAuthorizer, where the groups ride in the actor id
+as "<oid>|<comma-separated group names>".
+
 Configurable via:
     OPENFGA_GROUP_PATTERN      regex with named groups `tenant` and `role`
     OPENFGA_SUPERADMIN_GROUPS  comma-separated exact group names

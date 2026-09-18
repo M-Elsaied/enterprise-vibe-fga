@@ -32,6 +32,7 @@ import os
 from typing import Any, Dict, List
 
 from neuro_san.internals.authorization.openfga.open_fga_authorizer import OpenFgaAuthorizer
+from neuro_san.internals.reservations.agent_reservation import AgentReservation
 
 from .context_builder import build_contextual_tuples
 from .group_mapper import GroupMapper, RoleMemberships
@@ -78,6 +79,18 @@ class ContextualOpenFgaAuthorizer(OpenFgaAuthorizer):
     # ---- overrides -------------------------------------------------------
     async def authorize(self, actor: Dict[str, Any], action: str,
                         resource: Dict[str, Any]) -> bool:
+        # Temporary (reservation) networks: neuro-san authorizes BEFORE it looks one
+        # up in the reservations storage (base_request_handler.get_service), and a
+        # reservation has no tuples by design (evicted on a timer; scope is decided
+        # at promotion), so a plain OpenFGA check denies it - even for a super admin
+        # - and the lookup never runs. Allow reservation names locally instead.
+        # Names are "<prefix>-<uuid4>"; is_reservation_name is the library's own
+        # detector, so a permanent network can never match. OpenFGA is not contacted
+        # and nothing is written. Trust boundary: what protects a reservation is its
+        # unguessable UUIDv4, its short lifetime and the SSO proxy in front. The
+        # promotion strategy must never mint a permanent name ending in a UUIDv4.
+        if AgentReservation.is_reservation_name(resource.get("id")):
+            return True
         uid, groups_str = self._split_identity(actor.get("id"))
         # Empty/whitespace identity -> deny (never send an invalid "user:" to
         # OpenFGA, which would raise a 500). Fail closed.

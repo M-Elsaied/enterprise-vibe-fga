@@ -127,19 +127,21 @@ def test_contextual_authorizer_identity_group_split():
     assert C._split_identity(None) == ("", "")
 
 
-# ------------------------------------------ reservation-aware authorizer
+# ------------------------------ temporary (reservation) networks in the authorizer
 
 def test_reservation_names_bypass_fga_and_permanent_names_do_not():
-    # Temporary (reservation) networks are "<prefix>-<uuid4>". neuro-san
-    # authorizes BEFORE its reservation lookup, so the authorizer must allow
-    # them locally; everything else must still go to OpenFGA.
+    # PERSISTED mode (plain user_id, no groups): temporary networks are
+    # "<prefix>-<uuid4>". neuro-san authorizes BEFORE its reservation lookup, so
+    # the authorizer must allow them locally; everything else - including
+    # near-misses of the name format - must still go to the stock OpenFGA check.
     import asyncio
     import uuid
     from unittest.mock import AsyncMock, patch
     from neuro_san.internals.authorization.openfga.open_fga_authorizer import OpenFgaAuthorizer
-    from enforcement.reservation_aware_authorizer import ReservationAwareOpenFgaAuthorizer as R
+    from enforcement.contextual_authorizer import ContextualOpenFgaAuthorizer as R
 
     auth = R.__new__(R)   # skip the constructor: no FGA client needed for routing
+    auth._group_mapper = GroupMapper()
     actor = {"type": "user", "id": "some-oid"}
 
     async def run(name):
@@ -154,6 +156,47 @@ def test_reservation_names_bypass_fga_and_permanent_names_do_not():
     for name in ["alpha--private", "tools/servicenow_tickets", "agent_network_designer",
                  f"x-{uuid.uuid1()}", "servicenow_lookup-d44e", None]:
         assert asyncio.run(run(name)) == (False, True), name
+
+
+def test_group_mode_authorizer_also_allows_reservations():
+    # Option B (group mode) builds its own OpenFGA check, so it needs the same
+    # reservation allow; and permanent names must still be checked WITH the
+    # group-derived contextual tuples.
+    import asyncio
+    import uuid
+    from unittest.mock import AsyncMock, Mock, patch
+    import openfga_sdk
+    import openfga_sdk.client.models.check_request  # noqa: F401  (attribute access below)
+    import openfga_sdk.client.models.tuple  # noqa: F401
+    from neuro_san.internals.authorization.openfga.open_fga_authorizer import OpenFgaAuthorizer
+    from enforcement.contextual_authorizer import ContextualOpenFgaAuthorizer as C
+
+    auth = C.__new__(C)               # skip the constructor: no live FGA client
+    auth._group_mapper = GroupMapper()
+    auth.openfga_sdk = openfga_sdk
+    auth.fga_client = Mock(check=AsyncMock(return_value=Mock(allowed=True)))
+    actor = {"type": "user", "id": "some-oid|NSAN-ALPHA-DEVELOPERS"}
+    res = lambda name: {"type": "agent_network", "id": name}  # noqa: E731
+
+    # reservation -> allowed locally, OpenFGA never asked (with or without identity)
+    assert asyncio.run(auth.authorize(actor, "can_invoke", res(f"lookup-{uuid.uuid4()}"))) is True
+    assert asyncio.run(auth.authorize({"type": "user", "id": ""}, "can_invoke",
+                                      res(f"lookup-{uuid.uuid4()}"))) is True
+    assert auth.fga_client.check.await_count == 0
+
+    # permanent name + groups -> one OpenFGA check carrying the contextual role tuple
+    assert asyncio.run(auth.authorize(actor, "can_invoke", res("alpha--private"))) is True
+    assert auth.fga_client.check.await_count == 1
+    request = auth.fga_client.check.await_args.args[0]
+    assert request.object == "agent_network:alpha--private"
+    assert [(t.user, t.relation, t.object) for t in request.contextual_tuples] == [
+        ("user:some-oid", "developer", "tenant:alpha")]
+
+    # permanent name, no groups -> exactly the stock authorizer
+    with patch.object(OpenFgaAuthorizer, "authorize", new=AsyncMock(return_value=False)) as stock:
+        assert asyncio.run(auth.authorize({"type": "user", "id": "some-oid"},
+                                          "can_invoke", res("alpha--private"))) is False
+        assert stock.await_count == 1
 
 
 # --------------------------------------------------- atomic tenant onboarding
