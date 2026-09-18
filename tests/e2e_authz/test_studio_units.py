@@ -1,0 +1,251 @@
+"""Unit tests for the studio enforcement library (no server required)."""
+
+import os
+import sys
+
+import pytest
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "authz"))
+
+from enforcement import resource_map  # noqa: E402
+from enforcement.context_builder import build_contextual_tuples  # noqa: E402
+from enforcement.dev_identity import resolve_dev_identity  # noqa: E402
+from enforcement.group_mapper import GroupMapper, RoleMemberships  # noqa: E402
+from enforcement.provision import onboard_tuples  # noqa: E402
+import scim_sync  # noqa: E402
+
+
+# ---------------------------------------------------------------- group mapper
+
+def test_convention_maps_team_and_role():
+    roles = GroupMapper().map_groups(["NSAN-ALPHA-DEVELOPERS", "NSAN-BETA-ANALYSTS"])
+    assert roles.memberships == frozenset({("alpha", "developer"), ("beta", "analyst")})
+    assert not roles.super_admin
+
+
+def test_superadmin_group_is_platform_level():
+    roles = GroupMapper().map_groups(["NSAN-SUPERADMINS"])
+    assert roles.super_admin
+    assert roles.memberships == frozenset()
+
+
+def test_unknown_groups_are_ignored():
+    roles = GroupMapper().map_groups(["Random-Team", "NSAN-ALPHA-OWNERS", ""])
+    assert not roles
+
+
+def test_hyphenated_team_names_map():
+    # regression: real team names with hyphens/underscores must not silently
+    # produce zero roles (the F1 lockout bug)
+    roles = GroupMapper().map_groups(
+        ["NSAN-data-science-ADMINS", "NSAN-med_affairs-DEVELOPERS"])
+    assert roles.memberships == frozenset(
+        {("data-science", "admin"), ("med_affairs", "developer")})
+
+
+def test_seed_owned_resources_have_single_tenant_parent():
+    # F3 invariant: an OWNED resource (agent_network/tool) must have exactly ONE
+    # tenant parent, or a second tenant's ladder (incl. delete) leaks onto it.
+    # special_agent is exempt: the built-ins are shared platform types,
+    # intentionally parented to every tenant (multi-parent = available to all).
+    import re
+    seed = os.path.join(os.path.dirname(__file__), "..", "..",
+                        "authz", "seed", "studio-structural.yaml")
+    parents = {}
+    with open(seed, encoding="utf-8") as handle:
+        for line in handle:
+            m = re.search(r'relation:\s*tenant,\s*object:\s*"((?:agent_network|tool):[^"]+)"', line)
+            if m:
+                parents[m.group(1)] = parents.get(m.group(1), 0) + 1
+    multi = {obj: n for obj, n in parents.items() if n > 1}
+    assert not multi, f"owned resources with >1 tenant parent (isolation leak): {multi}"
+
+
+# ---------------------------------------------------------------- resource map
+
+def test_builtin_names_always_route_to_special_agent():
+    # the write-type vs check-type regression: even a caller declaring
+    # agent_network cannot make a built-in resolve to it
+    assert resource_map.resolve_type("agent_network_designer", "agent_network") == "special_agent"
+    assert resource_map.fga_object("agent_network_designer") == "special_agent:agent_network_designer"
+    parent = resource_map.parent_tuple("agent_network_designer", "alpha", "agent_network")
+    assert parent["object"] == "special_agent:agent_network_designer"
+
+
+def test_relation_routing_per_action():
+    assert resource_map.relation_for("execute", "some--net") == "can_execute"
+    assert resource_map.relation_for("delete", "some-tool", "tool") == "can_delete"
+    with pytest.raises(ValueError):
+        resource_map.relation_for("execute", "some-tool", "tool")   # tools don't execute
+    with pytest.raises(ValueError):
+        resource_map.relation_for("read", "agent_network_designer")  # built-ins: access only
+
+
+# ------------------------------------------------------------- context builder
+
+def test_contextual_tuples_shape():
+    roles = RoleMemberships(frozenset({("alpha", "developer"), ("beta", "analyst")}), True)
+    tuples = build_contextual_tuples("abc-123", roles)
+    assert {"user": "user:abc-123", "relation": "super_admin",
+            "object": "platform:main"} in tuples
+    assert {"user": "user:abc-123", "relation": "developer",
+            "object": "tenant:alpha"} in tuples
+    assert {"user": "user:abc-123", "relation": "analyst",
+            "object": "tenant:beta"} in tuples
+    assert len(tuples) == 3
+
+
+def test_no_roles_no_tuples():
+    assert build_contextual_tuples("abc", RoleMemberships()) == []
+
+
+# ---------------------------------------------------------------- dev identity
+
+def test_dev_identity_off_by_default(monkeypatch):
+    monkeypatch.delenv("OPENFGA_DEV_IDENTITY", raising=False)
+    assert resolve_dev_identity({"x-dev-user": "mallory", "x-dev-groups": "NSAN-SUPERADMINS"}) is None
+
+
+def test_dev_identity_on_when_enabled(monkeypatch):
+    monkeypatch.setenv("OPENFGA_DEV_IDENTITY", "enabled")
+    user, groups = resolve_dev_identity(
+        {"x-dev-user": "tester", "x-dev-groups": "NSAN-ALPHA-ADMINS, NSAN-SUPERADMINS"})
+    assert user == "tester"
+    assert groups == ["NSAN-ALPHA-ADMINS", "NSAN-SUPERADMINS"]
+
+
+# ---------------------------------------------------- contextual authorizer parsing
+
+def test_contextual_authorizer_identity_group_split():
+    # the Option B carrier splits "<uid>|<groups>" and maps the group segment;
+    # tested without instantiating the FGA client (pure parsing helpers).
+    from enforcement.contextual_authorizer import ContextualOpenFgaAuthorizer as C
+    assert C._split_identity("abc-oid|NSAN-ALPHA-DEVELOPERS,NSAN-SUPERADMINS") == (
+        "abc-oid", "NSAN-ALPHA-DEVELOPERS,NSAN-SUPERADMINS")
+    # no delimiter -> plain user id, persisted mode still works
+    assert C._split_identity("abc-oid") == ("abc-oid", "")
+    assert C._split_identity(None) == ("", "")
+
+
+# ------------------------------ temporary (reservation) networks in the authorizer
+
+def test_reservation_names_bypass_fga_and_permanent_names_do_not():
+    # PERSISTED mode (plain user_id, no groups): temporary networks are
+    # "<prefix>-<uuid4>". neuro-san authorizes BEFORE its reservation lookup, so
+    # the authorizer must allow them locally; everything else - including
+    # near-misses of the name format - must still go to the stock OpenFGA check.
+    import asyncio
+    import uuid
+    from unittest.mock import AsyncMock, patch
+    from neuro_san.internals.authorization.openfga.open_fga_authorizer import OpenFgaAuthorizer
+    from enforcement.contextual_authorizer import ContextualOpenFgaAuthorizer as R
+
+    auth = R.__new__(R)   # skip the constructor: no FGA client needed for routing
+    auth._group_mapper = GroupMapper()
+    actor = {"type": "user", "id": "some-oid"}
+
+    async def run(name):
+        with patch.object(OpenFgaAuthorizer, "authorize", new=AsyncMock(return_value=False)) as fga:
+            allowed = await auth.authorize(actor, "can_invoke", {"type": "agent_network", "id": name})
+            return allowed, fga.await_count > 0
+
+    # reservation -> allowed, OpenFGA never asked
+    assert asyncio.run(run(f"servicenow_lookup-{uuid.uuid4()}")) == (True, False)
+    assert asyncio.run(run(str(uuid.uuid4()))) == (True, False)
+    # permanent names -> delegated to OpenFGA (which said no here)
+    for name in ["alpha--private", "tools/servicenow_tickets", "agent_network_designer",
+                 f"x-{uuid.uuid1()}", "servicenow_lookup-d44e", None]:
+        assert asyncio.run(run(name)) == (False, True), name
+
+
+def test_group_mode_authorizer_also_allows_reservations():
+    # Option B (group mode) builds its own OpenFGA check, so it needs the same
+    # reservation allow; and permanent names must still be checked WITH the
+    # group-derived contextual tuples.
+    import asyncio
+    import uuid
+    from unittest.mock import AsyncMock, Mock, patch
+    import openfga_sdk
+    import openfga_sdk.client.models.check_request  # noqa: F401  (attribute access below)
+    import openfga_sdk.client.models.tuple  # noqa: F401
+    from neuro_san.internals.authorization.openfga.open_fga_authorizer import OpenFgaAuthorizer
+    from enforcement.contextual_authorizer import ContextualOpenFgaAuthorizer as C
+
+    auth = C.__new__(C)               # skip the constructor: no live FGA client
+    auth._group_mapper = GroupMapper()
+    auth.openfga_sdk = openfga_sdk
+    auth.fga_client = Mock(check=AsyncMock(return_value=Mock(allowed=True)))
+    actor = {"type": "user", "id": "some-oid|NSAN-ALPHA-DEVELOPERS"}
+    res = lambda name: {"type": "agent_network", "id": name}  # noqa: E731
+
+    # reservation -> allowed locally, OpenFGA never asked (with or without identity)
+    assert asyncio.run(auth.authorize(actor, "can_invoke", res(f"lookup-{uuid.uuid4()}"))) is True
+    assert asyncio.run(auth.authorize({"type": "user", "id": ""}, "can_invoke",
+                                      res(f"lookup-{uuid.uuid4()}"))) is True
+    assert auth.fga_client.check.await_count == 0
+
+    # permanent name + groups -> one OpenFGA check carrying the contextual role tuple
+    assert asyncio.run(auth.authorize(actor, "can_invoke", res("alpha--private"))) is True
+    assert auth.fga_client.check.await_count == 1
+    request = auth.fga_client.check.await_args.args[0]
+    assert request.object == "agent_network:alpha--private"
+    assert [(t.user, t.relation, t.object) for t in request.contextual_tuples] == [
+        ("user:some-oid", "developer", "tenant:alpha")]
+
+    # permanent name, no groups -> exactly the stock authorizer
+    with patch.object(OpenFgaAuthorizer, "authorize", new=AsyncMock(return_value=False)) as stock:
+        assert asyncio.run(auth.authorize({"type": "user", "id": "some-oid"},
+                                          "can_invoke", res("alpha--private"))) is False
+        assert stock.await_count == 1
+
+
+# --------------------------------------------------- atomic tenant onboarding
+
+def test_onboard_tuples_bind_convention_groups():
+    # onboarding is the platform link PLUS the three convention groups bound to
+    # the ladder roles - one atomic write (see Provisioner._write_many).
+    tuples = onboard_tuples("alpha", platform="main")
+    assert {"user": "platform:main", "relation": "platform",
+            "object": "tenant:alpha"} in tuples
+    assert {"user": "group:NSAN-ALPHA-ADMINS#member", "relation": "admin",
+            "object": "tenant:alpha"} in tuples
+    assert {"user": "group:NSAN-ALPHA-DEVELOPERS#member", "relation": "developer",
+            "object": "tenant:alpha"} in tuples
+    assert {"user": "group:NSAN-ALPHA-ANALYSTS#member", "relation": "analyst",
+            "object": "tenant:alpha"} in tuples
+    assert len(tuples) == 4
+    # the group names the onboarding writes must map back through the SAME
+    # convention the request path uses - onboarding and enforcement can't drift.
+    roles = GroupMapper().map_groups(
+        ["NSAN-ALPHA-ADMINS", "NSAN-ALPHA-DEVELOPERS", "NSAN-ALPHA-ANALYSTS"])
+    assert roles.memberships == frozenset(
+        {("alpha", "admin"), ("alpha", "developer"), ("alpha", "analyst")})
+
+
+# ------------------------------------------------- SCIM/IdP reference sync stub
+
+def test_scim_desired_from_feed_uses_the_convention():
+    feed = {
+        "NSAN-ALPHA-DEVELOPERS": ["oid-dina"],
+        "NSAN-BETA-ANALYSTS": ["oid-bob"],
+        "NSAN-SUPERADMINS": ["oid-sam"],
+        "Random-Unmapped-Group": ["oid-noise"],   # ignored, like the request path
+    }
+    desired = scim_sync.desired_from_feed(feed, platform="main")
+    assert ("user:oid-dina", "developer", "tenant:alpha") in desired
+    assert ("user:oid-bob", "analyst", "tenant:beta") in desired
+    assert ("user:oid-sam", "super_admin", "platform:main") in desired
+    # the unmapped group contributes nothing
+    assert not any(t[0] == "user:oid-noise" for t in desired)
+
+
+def test_scim_plan_sync_adds_missing_and_prunes_drift():
+    feed = {"NSAN-ALPHA-DEVELOPERS": ["oid-dina"]}
+    # current store holds a stale grant the feed no longer justifies (leaver)
+    current = [
+        ("user:oid-dina", "developer", "tenant:alpha"),   # still justified
+        ("user:oid-gone", "developer", "tenant:alpha"),   # drift -> must be pruned
+    ]
+    adds, deletes = scim_sync.plan_sync(feed, current, platform="main")
+    assert adds == []                                        # already present
+    assert deletes == [("user:oid-gone", "developer", "tenant:alpha")]

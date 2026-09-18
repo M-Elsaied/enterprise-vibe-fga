@@ -1,9 +1,9 @@
 module connectors
 
-# Governed external binding (ticketing system, data API, ...). The runtime
-# does not check connectors per call - can_use is enforced by the platform's
-# publish pipeline and by connector-owning services, which DO pass query
-# context, so time_boxed conditions are safe here.
+# Optional module: governed external binding (ticketing system, data API, ...).
+# The runtime does not check connectors per call - can_use is enforced by the
+# platform's publish pipeline and connector-owning services, which DO pass
+# query context, so time_boxed conditions are safe here.
 type connector
   relations
     define tenant: [tenant]

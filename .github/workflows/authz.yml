@@ -1,0 +1,38 @@
+name: authz-model
+
+# Real CI gate for the authorization model: validates BOTH manifests and runs
+# every .fga.yaml test suite against the fga CLI's built-in engine (no server).
+on:
+  pull_request:
+    paths:
+      - "authz/model/**"
+      - "authz/tests/**"
+      - ".github/workflows/authz.yml"
+  push:
+    branches: [main, studio-rbac]
+    paths:
+      - "authz/model/**"
+      - "authz/tests/**"
+
+jobs:
+  model-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install fga CLI
+        run: |
+          curl -sSL https://github.com/openfga/cli/releases/download/v0.7.20/fga_0.7.20_linux_amd64.tar.gz \
+            | tar -xz -C /usr/local/bin fga
+          fga version
+      - name: Validate manifests
+        working-directory: authz/model
+        run: |
+          fga model validate --file core.fga.mod --format modular
+          fga model validate --file full.fga.mod --format modular
+      - name: Run model test suites
+        working-directory: authz/tests
+        run: |
+          for suite in studio-persisted studio-contextual tenancy; do
+            echo "== $suite =="
+            fga model test --tests "$suite.fga.yaml"
+          done

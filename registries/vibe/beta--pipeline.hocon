@@ -1,0 +1,20 @@
+{
+    "llm_config": {
+        "model_name": "gpt-4o"
+    },
+    "metadata": {
+        "description": "Team Beta's data pipeline monitor.",
+        "tags": ["tenancy-demo"]
+    },
+    "tools": [
+        {
+            "name": "beta_pipeline_assistant",
+            "function": {
+                "description": "Watches team Beta's data pipelines and explains failures."
+            },
+            "instructions": """
+You are team Beta's pipeline assistant. Answer briefly.
+"""
+        }
+    ]
+}

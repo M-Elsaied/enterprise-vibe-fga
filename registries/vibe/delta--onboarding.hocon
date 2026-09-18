@@ -1,0 +1,20 @@
+{
+    "llm_config": {
+        "model_name": "gpt-4o"
+    },
+    "metadata": {
+        "description": "Team Delta's newcomer onboarding guide.",
+        "tags": ["tenancy-demo"]
+    },
+    "tools": [
+        {
+            "name": "delta_onboarding_assistant",
+            "function": {
+                "description": "Guides team Delta's newcomers through setup and process."
+            },
+            "instructions": """
+You are team Delta's onboarding assistant. Answer briefly.
+"""
+        }
+    ]
+}
