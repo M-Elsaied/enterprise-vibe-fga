@@ -13,11 +13,13 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "authz"))
 
-from enforcement import GroupMapper, Provisioner, StudioAuthzClient  # noqa: E402
+from enforcement import GroupMapper  # noqa: E402
+from enforcement import Provisioner  # noqa: E402
+from enforcement import StudioAuthzClient  # noqa: E402
 
 pytestmark = pytest.mark.skipif(
-    not os.environ.get("STUDIO_STORE_ID"),
-    reason="studio store not seeded (run via authz/run_e2e.ps1)")
+    not os.environ.get("STUDIO_STORE_ID"), reason="studio store not seeded (run via authz/run_e2e.ps1)"
+)
 
 MAPPER = GroupMapper()
 
@@ -35,6 +37,7 @@ def roles_for(*groups):
 
 
 # ---------------------------------------------------------- the ladder, live
+
 
 def test_developer_matrix_contextual():
     c = client()
@@ -74,11 +77,19 @@ def test_super_admin_spans_all_tenants():
     assert c.check_create("sam", "beta", roles)
 
 
-MIA_READ = ["agent_network_html_creator", "alpha--net", "alpha--private",
-            "alpha--public", "alpha--reports", "alpha--support", "beta--internal",
-            "beta--net", "beta--pipeline", "ddgs_search"]
-MIA_UPDATE = ["alpha--net", "alpha--private", "alpha--public", "alpha--reports",
-              "alpha--support", "ddgs_search"]
+MIA_READ = [
+    "agent_network_html_creator",
+    "alpha--net",
+    "alpha--private",
+    "alpha--public",
+    "alpha--reports",
+    "alpha--support",
+    "beta--internal",
+    "beta--net",
+    "beta--pipeline",
+    "ddgs_search",
+]
+MIA_UPDATE = ["alpha--net", "alpha--private", "alpha--public", "alpha--reports", "alpha--support", "ddgs_search"]
 
 
 def test_multi_team_user_and_listing():
@@ -94,12 +105,13 @@ def test_multi_team_user_and_listing():
 
 def test_no_roles_sees_nothing():
     c = client()
-    roles = roles_for()          # authenticated stranger: no mapped groups
+    roles = roles_for()  # authenticated stranger: no mapped groups
     assert not c.check("eve", "read", "alpha--net", roles)
     assert c.list_ids("eve", "read", "agent_network", roles) == []
 
 
 # ------------------------------------------------- provisioning + regression
+
 
 def test_provisioning_uses_the_checked_type():
     api = os.environ["FGA_API_URL"]
@@ -109,8 +121,7 @@ def test_provisioning_uses_the_checked_type():
     assert p.provision_tenant("gamma") in ("written", "already-existed")
     assert p.provision_resource("gamma--net", "gamma") in ("written", "already-existed")
     # even DECLARED as agent_network, a built-in is provisioned as special_agent
-    assert p.provision_resource("agent_network_designer", "gamma",
-                                "agent_network") in ("written", "already-existed")
+    assert p.provision_resource("agent_network_designer", "gamma", "agent_network") in ("written", "already-existed")
 
     c = client()
     roles = roles_for("NSAN-GAMMA-DEVELOPERS")

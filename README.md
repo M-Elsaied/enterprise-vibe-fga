@@ -23,7 +23,8 @@ groups**; every request is one check the runtime enforces (allow / **403**). Two
 "Option B", nothing about users persisted) and **full** (adds marketplace publishing,
 connectors, LLM entitlements). The studio profile is the default focus below.
 
-**What it does (capabilities)**
+### What it does (capabilities)
+
 - **Structural tenant isolation** - no tuple path, no access; nothing to forget to check.
 - **Four-role ladder per tenant** (super_admin / admin / developer / analyst); one person
   can be a developer in one team and an analyst in another at the same time.
@@ -36,7 +37,8 @@ connectors, LLM entitlements). The studio profile is the default focus below.
 - **Everything is proven**: model-layer suites (grants *and* denials) + **78 live E2E
   tests** against a real OpenFGA and a real neuro-san server over HTTP.
 
-**Known limitations (each also flagged where it bites)**
+### Known limitations (each also flagged where it bites)
+
 - **You bring identity.** The repo ships a *demo* SSO gateway; header trust/stripping and
   Entra **group-name** claims (Entra emits GUIDs by default) are your proxy's job - see
   *Deploying to your own environment*.
@@ -139,8 +141,8 @@ rather than assumed. Reading them in order explains every component:
 
 Everything that surprised us along the way is recorded in the gotchas section below,
 each with a test pinning it down. What ships for deployment: the model, the enforcement
-library (packaged, importable), the runtime authorizers for both modes (stock persisted
-+ the `ContextualOpenFgaAuthorizer` for Option B), a cross-platform `authz/bootstrap.sh`,
+library (packaged, importable), the runtime authorizer (`ContextualOpenFgaAuthorizer`,
+one class for persisted mode, group mode and temporary networks), a cross-platform `authz/bootstrap.sh`,
 the image wiring (`deploy/Dockerfile` copies `authz/` and bakes in `openfga-sdk`), the
 `.env.example` contract, and a CI gate (`.github/workflows/authz.yml`). What you still
 bring: your cluster, a persistent OpenFGA, and your OIDC proxy (the repo's demo gateway is
@@ -167,6 +169,7 @@ Model sources: `authz/model/modules/` (modular OpenFGA files).
 
 One set of model modules, two deployment profiles built from two manifests:
 
+<!-- pyml disable line-length -->
 | | **Studio profile** | **Full profile** |
 |---|---|---|
 | Manifest | `authz/model/core.fga.mod` | `authz/model/full.fga.mod` |
@@ -177,6 +180,8 @@ One set of model modules, two deployment profiles built from two manifests:
 | Role delivery | **Option B default**: IdP groups -> per-request contextual tuples, nothing about users persisted | Persisted membership tuples via the admin API |
 | Runtime relation | `AGENT_AUTHORIZER_ALLOW_RELATION=can_execute` | `AGENT_AUTHORIZER_ALLOW_RELATION=can_invoke` |
 | Enforcement code | `authz/enforcement/` (middleware -> group mapper -> contextual tuples -> Check/ListObjects) | neuro-san runtime + admin API |
+
+<!-- pyml enable line-length -->
 
 The same relations accept `[user, group#member]`, so a studio deployment can
 later switch from contextual to persisted membership - or adopt the optional
@@ -243,6 +248,7 @@ tuple, not the name.
 **The personas.** Each is defined only by IdP group membership - the
 `NSAN-<TEAM>-<ROLE>` naming convention does the rest:
 
+<!-- pyml disable line-length -->
 | Persona | IdP groups | Resulting role(s) | Expect to see |
 |---|---|---|---|
 | **adam** | `NSAN-ALPHA-ADMINS` | admin @ alpha | alpha's 4 networks, every verb incl. delete |
@@ -254,6 +260,8 @@ tuple, not the name.
 | **mia** | alpha developers + beta analysts | developer @ alpha AND analyst @ beta | 6 networks, different verbs per team |
 | **sam** | `NSAN-SUPERADMINS` | super_admin (platform-wide) | all 9 networks across all 4 teams |
 | **eve** | none mapped | none | an empty studio |
+
+<!-- pyml enable line-length -->
 
 ### dina - developer in team alpha
 
@@ -312,6 +320,7 @@ create, update, delete, tool CRUD, special-agent access - is checked by the plat
 services against the same store (the admin API and, in the studio profile, the enforcement
 library); the runtime front door itself gates only invocation.
 
+<!-- pyml disable line-length -->
 | Operation | Enforcement point | FGA interaction |
 |---|---|---|
 | Invoke / chat / connectivity / MCP | neuro-san runtime (built in) | Check `can_invoke` |
@@ -321,13 +330,15 @@ library); the runtime front door itself gates only invocation.
 | Approve an LLM for a tenant | admin API | Check `can_approve`, write `available_to` |
 | Register a BYOM key | key-registration API | Check `can_use` on `feature:byom` |
 
+<!-- pyml enable line-length -->
+
 Runtime wiring. **The allow-relation differs by profile** - `can_invoke` exists only in
 the full/marketplace model; the studio/core model's invoke verb is `can_execute`. Using
 the wrong one sends checks for a relation that does not exist -> HTTP 500 on every request.
 
 Full / persisted profile (runnable today, from `authz/bootstrap.sh`):
 
-```
+```text
 AGENT_AUTHORIZER=neuro_san.internals.authorization.openfga.open_fga_authorizer.OpenFgaAuthorizer
 AGENT_AUTHORIZER_ACTOR_KEY=user
 AGENT_AUTHORIZER_RESOURCE_KEY=agent_network
@@ -338,7 +349,7 @@ FGA_API_URL=...   FGA_STORE_NAME=...   FGA_MODEL_ID=<pinned>   FGA_POLICY_FILE=/
 
 Studio / Option B profile (group-derived roles - requires the contextual authorizer):
 
-```
+```text
 AGENT_AUTHORIZER=authz.enforcement.contextual_authorizer.ContextualOpenFgaAuthorizer
 AGENT_AUTHORIZER_ALLOW_RELATION=can_execute         # studio/core profile
 # proxy sets:  user_id = "<oid>|<comma-separated NSAN group names>"
@@ -356,7 +367,7 @@ authorizer: with a plain `user_id: <oid>` it runs exactly the stock persisted ch
 `<oid>|<groups>` it adds the group-derived roles; and in both it lets temporary networks
 through. If you serve temporary networks, use it in persisted mode too:
 
-```
+```text
 AGENT_AUTHORIZER=authz.enforcement.contextual_authorizer.ContextualOpenFgaAuthorizer
 ```
 
@@ -385,6 +396,7 @@ governed way tuples come into being. It follows a **hybrid membership model**:
 Every management operation is itself authorized by OpenFGA before it writes - the
 authorization system authorizes its own administration:
 
+<!-- pyml disable line-length -->
 | Operation | Endpoint | Caller must pass |
 |---|---|---|
 | Create tenant (born with an admin group) | `POST /tenants` | `super_admin` on the platform |
@@ -393,6 +405,8 @@ authorization system authorizes its own administration:
 | Direct ladder-role grant (exception path) | `POST/DELETE /tenants/{t}/direct-grants` | `can_administer` on the tenant |
 | Group membership (steady-state path) | `POST/DELETE /idp/groups/{g}/members` | admin of a tenant the group is bound to, or super admin |
 | Access review (recertification sweep) | `GET /tenants/{t}/access-review` | `can_administer` on the tenant |
+
+<!-- pyml enable line-length -->
 
 Two invariants the model cannot express live in this service: a tenant is **created with
 an admin group**, and the **last admin can never be removed** (409). Every write appends
@@ -564,6 +578,7 @@ one-line fix instead of a traceback.
 Leave the stack running, then start the studio persona console on :8400.
 
 Windows (PowerShell):
+
 ```powershell
 powershell -ExecutionPolicy Bypass -File authz\run_e2e.ps1 -KeepUp   # stack stays running
 $env:OPENFGA_DEV_IDENTITY="enabled"; $env:FGA_API_URL="http://127.0.0.1:18080"
@@ -571,13 +586,14 @@ $env:OPENFGA_DEV_IDENTITY="enabled"; $env:FGA_API_URL="http://127.0.0.1:18080"
 ```
 
 macOS / Linux (bash):
+
 ```bash
 ./authz/run_e2e.sh --keep-up          # stack stays running
 OPENFGA_DEV_IDENTITY=enabled FGA_API_URL=http://127.0.0.1:18080 \
   ./.venv/bin/python authz/studio_demo.py
 ```
 
-Then open **http://127.0.0.1:8400**.
+Then open **<http://127.0.0.1:8400>**.
 
 This is the **studio-profile** console shown in the screenshots above: switch between the
 tenant x role personas (adam / dina / ana / bob / gil / dora / mia / sam / eve) and watch
@@ -615,10 +631,10 @@ nsflow reinstall; `--remove` to undo):
 .venv\Scripts\python.exe authz\install_studio_widget.py
 ```
 
-Open the studio at http://127.0.0.1:4173. A floating "FGA persona" pill bar sits in the
+Open the studio at <http://127.0.0.1:4173>. A floating "FGA persona" pill bar sits in the
 bottom-right corner: click a persona and the studio reloads as them - the Available Agents
 sidebar changes and chat/connectivity are authorized the same way. The standalone switcher
-page also remains at http://127.0.0.1:8210/__persona. As launched above (`run_e2e.ps1`
+page also remains at <http://127.0.0.1:8210/__persona>. As launched above (`run_e2e.ps1`
 serves the **full** profile) the personas are the marketplace set (sam / ada / alice / bob
 / eve). The per-persona studio screenshots earlier in this README use the **studio**
 profile - reproduce those with the :8400 console, or point the runtime at the studio store
@@ -640,6 +656,7 @@ what you replace it with, which files to take, and how.
 
 ### What is real vs simulated
 
+<!-- pyml disable line-length -->
 | Concern | In this repo (demo) | Production - what you do |
 |---|---|---|
 | **Model + relations** | `authz/model/` (7 files) | **Ship as-is.** This *is* the policy. |
@@ -649,6 +666,8 @@ what you replace it with, which files to take, and how.
 | **Identity** | dev gateway / `X-Dev-*` / persona picker | **Your mod_auth_openidc + Entra**, real headers |
 | **Roles delivery** | persona tuples, or group-encoded dev header | **persisted** tuples (IdP sync) **or** Option B header |
 | **Bootstrap** | `run_e2e.ps1/.sh` (memory) | **`authz/bootstrap.sh`** against your OpenFGA |
+
+<!-- pyml enable line-length -->
 
 ### Files to take (ship) vs drop (demo-only)
 
@@ -678,10 +697,12 @@ past one replica.
 
 **2. Bootstrap your store from the model.** On a machine with the `fga` CLI + your OpenFGA
 reachable:
+
 ```bash
 PROFILE=studio   FGA_API_URL=https://openfga.internal:8080  FGA_STORE_NAME=nsan \
   FGA_API_TOKEN="$PRESHARED"   ./authz/bootstrap.sh      # PROFILE=full for the marketplace model
 ```
+
 It writes the model, exports `authz/model/model.json` (the `FGA_POLICY_FILE`, baked into
 your image via the Dockerfile), and prints the pinned `FGA_MODEL_ID`. Put that id in your
 runtime config. **Model-pin caveat:** neuro-san 0.6.94 ignores `FGA_MODEL_ID` on the
@@ -692,12 +713,14 @@ line, noted in the read-path section).
 **3. Seed YOUR structure - not the demo tuples.** OpenFGA needs the structural graph
 (never role tuples in Option B). Replace `authz/seed/studio-structural.yaml` with your
 own:
+
 ```yaml
 # one platform, your tenants, your resources (object id = the served network name)
 - {user: "platform:main", relation: platform, object: "tenant:<your-team>"}
 - {user: "tenant:<your-team>", relation: tenant, object: "agent_network:<network-name>"}
 # ... one tenant parent per owned resource (single-owner - see the isolation test)
 ```
+
 Write it with `fga tuple write`, or provision at runtime via `authz.enforcement.Provisioner`
 / the admin API when networks are created. The built-in special agents are parented to
 every tenant (they are shared).
@@ -754,6 +777,7 @@ claims - and assignment is a governed, time-bound, reviewable workflow, not a ma
 edit.** This repo already is the right engine; below is what you run around it, and the
 thin repo-side helpers that meet it halfway.
 
+<!-- pyml disable line-length -->
 | Concern | Industry best practice (who does it) | Where it lives | In this repo |
 |---|---|---|---|
 | **Don't authorize off tokens/headers** | Groups in tokens are capped (Entra ~200 JWT / 150 SAML / ~6 implicit; Okta ~100) and headers 431 at ~8 KB. Assign groups **to app roles** / key off the immutable `oid`. "Tokens are for identity, not authorization." | **Your IdP + proxy** | Mapper keys off `oid` and ignores unknown groups; cap group headers - see below |
@@ -762,6 +786,8 @@ thin repo-side helpers that meet it halfway.
 | **Additive-union vs deny** | Additive-union is the default (GitHub/GitLab/K8s/Snowflake); high-blast-radius systems add an **evaluated-first deny** (Google Cloud IAM Deny, OpenFGA `but not`) for suspension/legal-hold | **This repo (reserved)** | Reserved `but not blocked` hook documented in `modules/resources.fga` |
 | **Governed assignment** | **Entra Entitlement Management** access packages (delegated self-service + approval + expiry), **PIM/JIT** for admin/super_admin, **Access Reviews**, **SoD** (SailPoint/Saviynt) | **Your IdP - no app UI** | Deliberately none: no in-app "add to role" button |
 | **Group creation IS access granting** | Lock down who can create/name the role groups; the naming convention is a **protected namespace** (Entra `Users can create security groups = No`, delegate via Privileged Role Admin) | **Your IdP tenant policy** | Atomic onboarding keeps group→role binding on one controlled path |
+
+<!-- pyml enable line-length -->
 
 **What you configure downstream (not in this repo):**
 
@@ -819,7 +845,7 @@ routine ladder-role assignment.
 Everything below is introduced by this repo; every file not shown is the unmodified
 upstream neuro-san-studio snapshot.
 
-```
+```text
 enterprise-vibe-fga/
 |-- README.md                     NEW  this file (upstream README moved to docs/)
 |-- .gitignore                    MOD  ignores tools/, .e2e-logs/, generated model.json

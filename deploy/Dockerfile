@@ -58,10 +58,6 @@ RUN if [ -f ${APP_SOURCE}/requirements.txt ]; \
 RUN pip install --prefix=/install --no-cache-dir \
     -r ${APP_SOURCE}/neuro_san_studio/plugins/langfuse/requirements.txt
 
-# authz layer: bake the OpenFGA SDK into the image so the runtime authorizer
-# never does a pip-install inside the pod (which fails without egress).
-RUN pip install --prefix=/install --no-cache-dir openfga-sdk
-
 # Reset to the root directory
 WORKDIR /
 

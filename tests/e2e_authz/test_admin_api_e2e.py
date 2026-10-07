@@ -12,34 +12,34 @@ tenant gamma and mutates tenant alpha's membership).
 
 import os
 
+import pytest
 import requests
 
-ADMIN = os.environ.get("ADMIN_BASE", "http://127.0.0.1:8300")
+ADMIN = os.environ.get("ADMIN_BASE")
 BASE = os.environ.get("E2E_BASE", "http://127.0.0.1:8123")
+
+pytestmark = pytest.mark.skipif(not ADMIN, reason="admin API not running (set ADMIN_BASE via run_e2e)")
 
 
 def admin(method, path, user, body=None):
-    return requests.request(method, f"{ADMIN}{path}", json=body,
-                            headers={"user_id": user}, timeout=30)
+    return requests.request(method, f"{ADMIN}{path}", json=body, headers={"user_id": user}, timeout=30)
 
 
 def runtime_status(user, network):
-    response = requests.get(f"{BASE}/api/v1/{network}/connectivity",
-                            headers={"user_id": user}, timeout=30)
+    response = requests.get(f"{BASE}/api/v1/{network}/connectivity", headers={"user_id": user}, timeout=30)
     return response.status_code
 
 
 # ---- tenant creation ---------------------------------------------------
 
+
 def test_01_stranger_cannot_create_tenant():
-    response = admin("POST", "/tenants", "eve",
-                     {"slug": "gamma", "admin_group": "g-gamma-admins"})
+    response = admin("POST", "/tenants", "eve", {"slug": "gamma", "admin_group": "g-gamma-admins"})
     assert response.status_code == 403
 
 
 def test_02_super_admin_creates_tenant():
-    response = admin("POST", "/tenants", "sam",
-                     {"slug": "gamma", "admin_group": "g-gamma-admins"})
+    response = admin("POST", "/tenants", "sam", {"slug": "gamma", "admin_group": "g-gamma-admins"})
     assert response.status_code == 201
 
 
@@ -55,20 +55,22 @@ def test_03_first_admin_arrives_via_group_path():
 
 # ---- direct membership (the exception path) ----------------------------
 
+
 def test_04_non_admin_cannot_add_members():
     response = admin("POST", "/tenants/alpha/members", "bob", {"user": "mallory"})
     assert response.status_code == 403
 
 
 def test_05_admin_grant_changes_runtime_immediately():
-    assert runtime_status("newhire", "alpha--private") == 403      # before
+    assert runtime_status("newhire", "alpha--private") == 403  # before
     response = admin("POST", "/tenants/alpha/members", "ada", {"user": "newhire"})
     assert response.status_code == 200
-    assert runtime_status("newhire", "alpha--private") == 200      # after
-    assert runtime_status("newhire", "beta--internal") == 403      # still isolated
+    assert runtime_status("newhire", "alpha--private") == 200  # after
+    assert runtime_status("newhire", "beta--internal") == 403  # still isolated
 
 
 # ---- group membership (the steady-state path) ---------------------------
+
 
 def test_06_admin_grant_via_group_changes_runtime():
     assert runtime_status("frank", "alpha--private") == 403
@@ -87,10 +89,11 @@ def test_07_group_path_denied_for_non_owner():
 def test_08_leaver_via_group_removal_revokes_runtime():
     response = admin("DELETE", "/idp/groups/alpha-team/members/frank", "ada")
     assert response.status_code == 200
-    assert runtime_status("frank", "alpha--private") == 403        # gone at once
+    assert runtime_status("frank", "alpha--private") == 403  # gone at once
 
 
 # ---- invariants ----------------------------------------------------------
+
 
 def test_09_last_admin_cannot_be_removed():
     response = admin("DELETE", "/tenants/gamma/admins/carol", "carol")
@@ -105,6 +108,7 @@ def test_10_second_admin_then_demotion_works():
 
 
 # ---- lifecycle close-out --------------------------------------------------
+
 
 def test_11_access_review_reflects_reality():
     review = admin("GET", "/tenants/alpha/access-review", "ada").json()

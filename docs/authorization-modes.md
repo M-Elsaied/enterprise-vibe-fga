@@ -14,11 +14,14 @@ expressible; it changes only **where the role tuples live when a check runs**.
 
 There are three delivery modes, and they compose:
 
+<!-- pyml disable line-length -->
 | Mode | Where role tuples come from | What is persisted | Best for |
 |---|---|---|---|
 | **Option B (contextual)** | The caller's IdP groups, mapped per request | Only the structural graph (tenants, resources) | Routine team x role; scales with zero per-user maintenance |
 | **Persisted** | Stored role tuples, materialized from groups by a sync | Structural graph + role tuples | High group-count-per-user (avoids header bloat); offline reasoning |
 | **Direct (exception)** | Written by hand through the admin API | The individual grant | Contractors, break-glass, one-offs groups can't express |
+
+<!-- pyml enable line-length -->
 
 Production is a **hybrid**: Option B for the routine bulk, direct grants for the
 exceptions, optionally materialized to persisted when scale demands it.
@@ -27,7 +30,7 @@ exceptions, optionally materialized to persisted when scale demands it.
 
 The proxy forwards identity **and** the caller's groups in one header:
 
-```
+```text
 user_id = "<oid>|NSAN-ALPHA-DEVELOPERS,NSAN-BETA-ANALYSTS"
 ```
 
@@ -35,7 +38,7 @@ user_id = "<oid>|NSAN-ALPHA-DEVELOPERS,NSAN-BETA-ANALYSTS"
 into a `(tenant, role)` pair, and the context builder rides them on the check as
 **contextual tuples**:
 
-```
+```text
 user:<oid>  developer  tenant:alpha
 user:<oid>  analyst    tenant:beta
 ```
@@ -48,7 +51,7 @@ Entra group-membership change - no tuples, no app-side work, at any scale.
 The naming convention **is** the mapping (configurable via `OPENFGA_GROUP_PATTERN`
 / `OPENFGA_SUPERADMIN_GROUPS`):
 
-```
+```text
 NSAN-<TEAM>-ADMINS       -> (team, admin)
 NSAN-<TEAM>-DEVELOPERS   -> (team, developer)
 NSAN-<TEAM>-ANALYSTS     -> (team, analyst)
@@ -60,11 +63,14 @@ NSAN-SUPERADMINS         -> platform super_admin (spans all tenants)
 OpenFGA **unions contextual tuples (from groups) with persisted tuples (from the
 app)** at check time, so the two lanes coexist on one model:
 
+<!-- pyml disable line-length -->
 | Grant | Lane | Managed in | Mechanism |
 |---|---|---|---|
 | Routine team x role (incl. multi-team) | **Group** | The IdP | Group membership -> contextual tuple (Option B) |
 | Contractor / break-glass / one-off | **Direct** | The app | `POST /tenants/{t}/direct-grants` -> persisted tuple (FGA-checked + audited) |
 | One user on one specific resource | **Per-object** (future) | The app | A directly-assignable relation on the resource (reserved hook in `resources.fga`) |
+
+<!-- pyml enable line-length -->
 
 **Why routine assignment should stay in the IdP:** one source of truth, no shadow
 access, free joiner/mover/leaver, and it is governed where the enterprise already
@@ -101,7 +107,8 @@ human-readable views, keep an `oid -> display name` lookup **outside** OpenFGA
 Almost all of it is configuration and a re-seed - the code already supports both
 modes.
 
-**Deployment / env**
+### Deployment / env
+
 1. `AGENT_AUTHORIZER = authz.enforcement.contextual_authorizer.ContextualOpenFgaAuthorizer`
    (the repo root must be on `PYTHONPATH` so the `authz` package imports). This is the
    same value for persisted mode too: with a plain `user_id` it runs the stock check.
@@ -117,7 +124,8 @@ modes.
    Do **not** persist role tuples in Option B - they arrive contextually. The only
    persisted role-ish tuples are direct-grant exceptions.
 
-**Decisions to settle first**
+### Decisions to settle first
+
 - **Group naming -> (tenant, role).** The most important decision; the whole
   mapping depends on it. Nail the convention, then set the pattern.
 - **Four roles vs five.** The ladder is exactly four; a plain `member`/"user" tier
