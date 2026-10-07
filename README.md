@@ -477,10 +477,16 @@ spoof any identity.
 Full env template: `.env.example` (authz block). What each enforcement module does, and
 the onboarding runbook (which writer produces which tuples): `authz/README.md`.
 
-**Not supported in this repo (yet):** nested tenants (a tenant inheriting roles from a
-parent tenant) and extra group roles such as just-in-time (JIT) elevation or a general
-"users" group. The model has no tenant-to-tenant relation, and the group mapper only
-resolves `ADMINS`, `DEVELOPERS` and `ANALYSTS`. Both need a model or mapper change.
+**Nested tenants are supported.** A tenant can have a `parent` tenant (for example a
+division with team tenants under it); roles on the parent flow down to every child, and
+children reach the platform's super admins through the parent. Adding a child is one
+tuple: `{user: "tenant:<parent>", relation: parent, object: "tenant:<child>"}`. Tenants
+without a parent behave exactly as before. How it works, how to set it up, and the
+trade-offs: [docs/authorization-modes.md](docs/authorization-modes.md#nested-tenants).
+
+**Not supported in this repo (yet):** extra group roles such as just-in-time (JIT)
+elevation or a general "users" group. The group mapper only resolves `ADMINS`,
+`DEVELOPERS` and `ANALYSTS`, so other role words need a mapper change.
 
 ## Getting started from scratch (first-timer)
 
@@ -869,7 +875,8 @@ enterprise-vibe-fga/
 |   |-- tests/
 |   |   |-- tenancy.fga.yaml           full-profile suite (grants AND denials)
 |   |   |-- studio-persisted.fga.yaml  4-role ladder matrix, persisted mode
-|   |   `-- studio-contextual.fga.yaml same matrix, Option B contextual mode
+|   |   |-- studio-contextual.fga.yaml same matrix, Option B contextual mode
+|   |   `-- nested-tenants.fga.yaml    parent/child tenants: roles flow down only
 |   |-- seed/
 |   |   |-- tuples.yaml                full-profile demo grants
 |   |   |-- studio-structural.yaml     studio structural graph (Option B: no roles)

@@ -19,6 +19,7 @@ cd ..\tests
 ..\..\tools\fga.exe model test --tests studio-contextual.fga.yaml   # Option B: per-test
                                     # tuples are sent as CONTEXTUAL tuples by the CLI
 ..\..\tools\fga.exe model test --tests tenancy.fga.yaml
+..\..\tools\fga.exe model test --tests nested-tenants.fga.yaml      # parent/child tenants
 ```
 
 ## Getting the binaries (one time)
@@ -70,7 +71,7 @@ models and consistency parameters).
 
 - Edit the module files, then validate and test from this directory's `model/` and `tests/`:
   ```powershell
-  cd authz\model;  ..\..\tools\fga.exe model validate --file fga.mod
+  cd authz\model;  ..\..\tools\fga.exe model validate --file core.fga.mod --format modular
   cd ..\tests;     ..\..\tools\fga.exe model test --tests tenancy.fga.yaml
   ```
   (the CLI resolves module paths relative to the current directory)
@@ -98,6 +99,7 @@ table below maps events to tuples regardless of which writer performs them.
 | LLM approved for tenant | admin API (super admin) | `available_to` + the object's `platform` link |
 | BYOM enabled | admin API (super admin) | `enabled_for` on `feature:byom` |
 | Scheduled networks | seed | `user:system can_invoke agent_network:<name>` |
+| Child tenant under a parent | seed / admin (super admin) | `tenant:<parent> parent tenant:<child>` (no `platform` link needed for the child) |
 | New tenant, convention groups (persisted mode) | admin API `POST /tenants/{t}/onboard` (super admin) | `platform` link + the three `NSAN-<TEAM>-*` groups bound to admin/developer/analyst, in one atomic write |
 | Exception grant (contractor, break-glass) | admin API `POST /tenants/{t}/direct-grants` | `user:<oid> <admin\|developer\|analyst> tenant:<t>` |
 | Temporary (reservation) network created | nobody | **no tuples** - the authorizer allows `<prefix>-<uuid4>` names locally; scope is decided when the network is promoted |

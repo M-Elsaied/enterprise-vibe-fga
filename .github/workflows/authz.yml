@@ -32,7 +32,7 @@ jobs:
       - name: Run model test suites
         working-directory: authz/tests
         run: |
-          for suite in studio-persisted studio-contextual tenancy; do
+          for suite in studio-persisted studio-contextual tenancy nested-tenants; do
             echo "== $suite =="
             fga model test --tests "$suite.fga.yaml"
           done

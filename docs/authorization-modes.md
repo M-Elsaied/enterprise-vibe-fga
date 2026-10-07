@@ -156,6 +156,94 @@ What protects a temporary network is its unguessable UUIDv4, its short lifetime 
 SSO proxy in front; the server does not tie it to its creator. The promotion strategy
 must never produce a permanent name that ends in a UUIDv4.
 
+## Nested tenants
+
+Use nested tenants when one team should automatically hold its role in a set of
+sub-teams, for example a division whose admins administer every team under it.
+
+```text
+platform:main
+└── tenant:division           linked to the platform
+    ├── tenant:team-a         parent: division
+    │   └── tenant:squad      parent: team-a (any depth)
+    └── tenant:team-b         parent: division
+```
+
+### How it works
+
+`tenant` has an optional `parent` relation, and each role includes the same role on the
+parent (`modules/core.fga`):
+
+```text
+define parent: [tenant]
+define admin: [user, group#member] or admin from parent
+define developer: [user, group#member] or developer from parent
+define analyst: [user, group#member] or analyst from parent
+define member: [user, group#member] or admin or member from parent
+define super_admin: super_admin from platform or super_admin from parent
+```
+
+- **Roles flow down, recursively.** An admin of `division` is an admin of `team-a`,
+  `team-b` and `squad`; an analyst stays an analyst (read and run only).
+- **Roles never flow up or sideways.** An admin of `team-a` has nothing in `division` or
+  `team-b`.
+- **Children reach the platform through their parent,** so platform super admins see
+  them without a `platform` link on the child.
+- **A tenant with no parent behaves exactly as before.**
+
+### Setting it up
+
+1. Load the current model into your store (`fga model write ... --file core.fga.mod`, or
+   `full.fga.mod`) and make it the pinned / latest model. No data migration is needed;
+   existing tuples keep their meaning.
+2. Link each child to its parent with one tuple per child. Only the top-level tenant
+   needs a `platform` link:
+
+   ```yaml
+   - {user: "platform:main", relation: platform, object: "tenant:division"}
+   - {user: "tenant:division", relation: parent, object: "tenant:team-a"}
+   - {user: "tenant:division", relation: parent, object: "tenant:team-b"}
+   - {user: "tenant:team-a", relation: parent, object: "tenant:squad"}
+   ```
+
+3. Parent resources to their own tenant as usual
+   (`{user: "tenant:team-a", relation: tenant, object: "agent_network:<name>"}`).
+4. Assign roles as before. In group mode no mapper change is needed: each group still
+   names one tenant (`NSAN-DIVISION-ADMINS` -> admin on `tenant:division`), and the model
+   applies that role to every descendant.
+
+To move a child, delete its old `parent` tuple and write the new one in the same write
+request, so it is never under both parents or neither. To stop inheritance for a child,
+delete its `parent` tuple (and give it a `platform` link if it should stay reachable by
+super admins).
+
+### Checking it
+
+`authz/tests/nested-tenants.fga.yaml` covers inheritance at two levels, no leak upward or
+sideways, super admin reach, flat tenants unaffected, and roles from the header (group
+mode). Run it with:
+
+```bash
+cd authz/tests
+fga model test --tests nested-tenants.fga.yaml
+```
+
+### Trade-offs to decide on
+
+- **Every role flows down in full, including delete.** A division admin can delete a
+  team's networks. If a parent should only see, not change, its children, give those
+  people `analyst` on the parent, or change the model so only some roles inherit.
+- **There is no per-child opt-out** other than removing the `parent` tuple.
+- **The admin API's last-admin check counts inherited admins,** so a child can be left
+  with no admin of its own while the parent's admins still administer it.
+- **The inspector's `who_can` lists inherited holders too.**
+- **Never create a cycle.** OpenFGA detects it, so checks still answer, but in a cycle
+  such as `a -> b -> a` each tenant is the other's parent: every role flows both ways
+  and the two tenants are effectively merged. Nothing in the model prevents writing one,
+  so check before writing a `parent` tuple.
+- **Keep the tree shallow.** Every check walks up the chain, and very deep trees approach
+  OpenFGA's resolution depth limit (25 by default).
+
 ## What does not change
 
 The model modules, the four-role semantics, `resource_map`, the contextual

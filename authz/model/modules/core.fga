@@ -20,14 +20,22 @@ type platform
 # tuple path exists, so members of tenant A have no path to tenant B's objects.
 # The studio role ladder (admin > developer > analyst) lives here; `member` is
 # the marketplace-profile general role and is kept for that profile.
+#
+# Nested tenants (optional): a tenant may have a `parent` tenant, e.g.
+# tenant:division parent tenant:team-a. Roles flow DOWN - an admin/developer/analyst/
+# member of the parent holds the same role in every child (recursively) - and a
+# child reaches the platform's super admins through its parent, so it needs no
+# platform link of its own. Roles never flow up or sideways. A tenant with no
+# parent behaves exactly as before. Parent tuples must not form a cycle.
 type tenant
   relations
     define platform: [platform]
-    define admin: [user, group#member]
-    define developer: [user, group#member]
-    define analyst: [user, group#member]
-    define member: [user, group#member] or admin
-    define super_admin: super_admin from platform
+    define parent: [tenant]
+    define admin: [user, group#member] or admin from parent
+    define developer: [user, group#member] or developer from parent
+    define analyst: [user, group#member] or analyst from parent
+    define member: [user, group#member] or admin or member from parent
+    define super_admin: super_admin from platform or super_admin from parent
     define can_administer: admin or super_admin
     # creating a network or tool is a tenant-scoped question ("create WHAT, WHERE"),
     # so the create verb of the ladder matrix is checked here, not on a not-yet-

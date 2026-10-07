@@ -1,0 +1,145 @@
+name: nested-tenants
+# Studio profile (core.fga.mod) with nested tenants:
+#
+#   platform:main
+#   ├── tenant:division          (linked to the platform)
+#   │   ├── tenant:team-a        (parent: division)
+#   │   │   └── tenant:squad     (parent: team-a - two levels deep)
+#   │   └── tenant:team-b        (parent: division)
+#   └── tenant:other             (flat, no parent - must be unaffected)
+#
+# Roles flow DOWN only. Children have no platform link of their own; super admins
+# reach them through the parent. File-level tuples below are persisted; tuples
+# inside a test are sent as CONTEXTUAL tuples (Option B), so both modes are covered.
+model_file: ../model/core.fga.mod
+tuples:
+  - {user: "platform:main", relation: platform, object: "tenant:division"}
+  - {user: "platform:main", relation: platform, object: "tenant:other"}
+  - {user: "tenant:division", relation: parent, object: "tenant:team-a"}
+  - {user: "tenant:division", relation: parent, object: "tenant:team-b"}
+  - {user: "tenant:team-a", relation: parent, object: "tenant:squad"}
+  - {user: "tenant:division", relation: tenant, object: "agent_network:division--net"}
+  - {user: "tenant:team-a", relation: tenant, object: "agent_network:team-a--net"}
+  - {user: "tenant:team-b", relation: tenant, object: "agent_network:team-b--net"}
+  - {user: "tenant:squad", relation: tenant, object: "agent_network:squad--net"}
+  - {user: "tenant:other", relation: tenant, object: "agent_network:other--net"}
+  - {user: "tenant:team-a", relation: tenant, object: "special_agent:agent_network_designer"}
+  # persisted roles
+  - {user: "user:dana", relation: admin, object: "tenant:division"}
+  - {user: "user:ted", relation: admin, object: "tenant:team-a"}
+  - {user: "user:sam", relation: super_admin, object: "platform:main"}
+  - {user: "user:olga", relation: admin, object: "tenant:other"}
+
+tests:
+  - name: parent admin inherits admin in every descendant, recursively
+    check:
+      - user: user:dana
+        object: agent_network:team-a--net
+        assertions: {can_read: true, can_update: true, can_delete: true, can_execute: true}
+      - user: user:dana
+        object: agent_network:team-b--net
+        assertions: {can_delete: true}
+      - user: user:dana
+        object: agent_network:squad--net
+        assertions: {can_delete: true}
+      - user: user:dana
+        object: tenant:squad
+        assertions: {admin: true, can_administer: true, can_create_resources: true}
+      - user: user:dana
+        object: special_agent:agent_network_designer
+        assertions: {can_access: true}
+    list_objects:
+      - user: user:dana
+        type: agent_network
+        assertions:
+          can_execute:
+            - agent_network:division--net
+            - agent_network:team-a--net
+            - agent_network:team-b--net
+            - agent_network:squad--net
+
+  - name: roles never flow up or sideways
+    check:
+      - user: user:ted
+        object: agent_network:team-a--net
+        assertions: {can_delete: true}
+      - user: user:ted
+        object: agent_network:squad--net
+        assertions: {can_delete: true}
+      - user: user:ted
+        object: agent_network:division--net
+        assertions: {can_read: false, can_execute: false}
+      - user: user:ted
+        object: agent_network:team-b--net
+        assertions: {can_read: false, can_execute: false}
+      - user: user:ted
+        object: tenant:division
+        assertions: {can_administer: false}
+
+  - name: flat tenant is unaffected and isolated
+    check:
+      - user: user:olga
+        object: agent_network:other--net
+        assertions: {can_delete: true}
+      - user: user:olga
+        object: agent_network:team-a--net
+        assertions: {can_execute: false}
+      - user: user:dana
+        object: agent_network:other--net
+        assertions: {can_execute: false}
+
+  - name: super admin reaches children through the parent (no platform link on children)
+    check:
+      - user: user:sam
+        object: agent_network:squad--net
+        assertions: {can_delete: true}
+      - user: user:sam
+        object: tenant:team-b
+        assertions: {super_admin: true, can_administer: true}
+      - user: user:sam
+        object: agent_network:other--net
+        assertions: {can_delete: true}
+
+  - name: inherited analyst stays analyst (read + execute only)
+    tuples:
+      - {user: "user:ana", relation: analyst, object: "tenant:division"}
+    check:
+      - user: user:ana
+        object: agent_network:squad--net
+        assertions: {can_read: true, can_execute: true, can_update: false, can_delete: false}
+      - user: user:ana
+        object: special_agent:agent_network_designer
+        assertions: {can_access: false}
+      - user: user:ana
+        object: tenant:team-a
+        assertions: {can_create_resources: false}
+
+  - name: group mode (contextual) - a role on the parent from the header flows down
+    tuples:
+      - {user: "user:dev1", relation: developer, object: "tenant:division"}
+    check:
+      - user: user:dev1
+        object: agent_network:team-b--net
+        assertions: {can_update: true, can_delete: false, can_execute: true}
+      - user: user:dev1
+        object: agent_network:other--net
+        assertions: {can_execute: false}
+    list_objects:
+      - user: user:dev1
+        type: agent_network
+        assertions:
+          can_execute:
+            - agent_network:division--net
+            - agent_network:team-a--net
+            - agent_network:team-b--net
+            - agent_network:squad--net
+
+  - name: contextual role on a child does not reach the parent or a sibling
+    tuples:
+      - {user: "user:dev2", relation: developer, object: "tenant:team-b"}
+    list_objects:
+      - user: user:dev2
+        type: agent_network
+        assertions:
+          can_execute:
+            - agent_network:team-b--net
