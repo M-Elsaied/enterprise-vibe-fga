@@ -98,3 +98,22 @@ table below maps events to tuples regardless of which writer performs them.
 | LLM approved for tenant | admin API (super admin) | `available_to` + the object's `platform` link |
 | BYOM enabled | admin API (super admin) | `enabled_for` on `feature:byom` |
 | Scheduled networks | seed | `user:system can_invoke agent_network:<name>` |
+| New tenant, convention groups (persisted mode) | admin API `POST /tenants/{t}/onboard` (super admin) | `platform` link + the three `NSAN-<TEAM>-*` groups bound to admin/developer/analyst, in one atomic write |
+| Exception grant (contractor, break-glass) | admin API `POST /tenants/{t}/direct-grants` | `user:<oid> <admin\|developer\|analyst> tenant:<t>` |
+| Temporary (reservation) network created | nobody | **no tuples** - the authorizer allows `<prefix>-<uuid4>` names locally; scope is decided when the network is promoted |
+| Roles in group mode (Option B) | nobody | **no tuples** - roles arrive per request from the groups in the header |
+
+## The enforcement library (`enforcement/`)
+
+| Module | What it does |
+|---|---|
+| `contextual_authorizer.py` | The runtime `AGENT_AUTHORIZER`. Plain `user_id` -> the stock persisted check; `<oid>\|<groups>` -> group-derived roles sent as contextual tuples; temporary (reservation) network names -> allowed locally, OpenFGA not contacted. One class for every mode. |
+| `group_mapper.py` | IdP group names -> `(tenant, role)`: `NSAN-<TEAM>-ADMINS/DEVELOPERS/ANALYSTS`, `NSAN-SUPERADMINS`. The team is lowercased and must equal the tenant id. |
+| `context_builder.py` | `(tenant, role)` pairs -> contextual tuples (max 100 per request). |
+| `middleware.py` | Trusted-header identity for platform services (Starlette). |
+| `client.py` | Check / ListObjects / Expand / ListUsers, routed through `resource_map`. |
+| `resource_map.py` | The single writer/checker routing table: an object can never be written under one type and checked under another. |
+| `provision.py` | Structural writes (resource -> tenant, single owner) and atomic tenant onboarding. |
+| `inspector.py` | Read-only "who can do what, and why" for admins; itself authorization-gated. |
+| `preflight.py` | Friendly startup check that OpenFGA is reachable (catches the https-vs-http mistake). |
+| `dev_identity.py` | Persona headers for local testing; off unless `OPENFGA_DEV_IDENTITY=enabled`. Never in production. |

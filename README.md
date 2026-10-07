@@ -33,7 +33,7 @@ connectors, LLM entitlements). The studio profile is the default focus below.
   Check + ListObjects.
 - **Governed admin API** - every write is itself FGA-checked and audited - plus a
   **read-only authorization inspector** (effective permissions + the grant-tree "why").
-- **Everything is proven**: model-layer suites (grants *and* denials) + **76 live E2E
+- **Everything is proven**: model-layer suites (grants *and* denials) + **78 live E2E
   tests** against a real OpenFGA and a real neuro-san server over HTTP.
 
 **Known limitations (each also flagged where it bites)**
@@ -198,8 +198,9 @@ person can be a developer in one team and an analyst in another at the same time
 
 Reading the matrix: *execute* means running an agent network - analysts can use
 everything their team serves but change nothing; *delete* is reserved for admins;
-*special agents* are the three privileged built-ins (network designer, editor,
-instruction editor), a distinct model type so analysts are excluded structurally;
+*special agents* are the privileged built-ins (network designer, editor, instructions
+editor, query generator, test generator), a distinct model type so analysts are excluded
+structurally;
 *create* is a tenant-scoped question ("create WHAT, WHERE") checked on the team, not on
 a not-yet-existing object.
 
@@ -459,8 +460,13 @@ value everywhere (default `main`) or super-admin silently denies.
 **6. Keep `OPENFGA_DEV_IDENTITY` unset** in production - enabling it lets `X-Dev-*` headers
 spoof any identity.
 
-Full env template: `.env.example` (authz block). Per-component keep/discard and the
-enforcement library API: `authz/README.md`.
+Full env template: `.env.example` (authz block). What each enforcement module does, and
+the onboarding runbook (which writer produces which tuples): `authz/README.md`.
+
+**Not supported in this repo (yet):** nested tenants (a tenant inheriting roles from a
+parent tenant) and extra group roles such as just-in-time (JIT) elevation or a general
+"users" group. The model has no tenant-to-tenant relation, and the group mapper only
+resolves `ADMINS`, `DEVELOPERS` and `ANALYSTS`. Both need a model or mapper change.
 
 ## Getting started from scratch (first-timer)
 
@@ -540,8 +546,8 @@ chmod +x authz/run_e2e.sh
 
 ---
 
-**Expected output either way:** `Tests 4/4 passing`, then `76 passed`, then `ALL GREEN`.
-The 76 include the Option-B suite (`test_option_b_http_e2e.py`) that drives group-derived
+**Expected output either way:** `Tests 4/4 passing`, then `78 passed`, then `ALL GREEN`.
+The 78 include the Option-B suite (`test_option_b_http_e2e.py`) that drives group-derived
 roles through a live neuro-san server wired to the contextual authorizer, and the inspector
 suite (`test_inspector.py`) that proves the read-only inspector's gating against live OpenFGA.
 
@@ -695,6 +701,14 @@ own:
 Write it with `fga tuple write`, or provision at runtime via `authz.enforcement.Provisioner`
 / the admin API when networks are created. The built-in special agents are parented to
 every tenant (they are shared).
+
+**Which type to store the built-in agents under.** The neuro-san runtime only ever checks
+`can_invoke`/`can_execute` on `agent_network:<served-name>`. If the runtime serves the
+built-ins (the studio's designer, editor, etc.), store them as **`agent_network:`** objects
+with a tenant parent, or every runtime request for them is denied. The `special_agent`
+type is only consulted by the enforcement library's `can_access` check, which the runtime
+never calls. A seed that stores the built-ins as `agent_network` will therefore show no
+`special_agent` rows in the database; that is expected, not a seeding failure.
 
 **4. Wire identity through your real SSO proxy.** mod_auth_openidc (or your gateway) must,
 per request, **strip any client-supplied** `user_id` / `X-Auth-Request-*` / `X-Dev-*`
@@ -885,7 +899,7 @@ enterprise-vibe-fga/
 | The enforcement code | `authz/enforcement/` - group mapper, context builder, client, inspector, both authorizers |
 | The governed writes | `authz/admin_api.py` - onboarding, membership, inspector (:8300) |
 | Model-layer tests | `authz/tests/*.fga.yaml` - `fga model test`, grants AND denials; CI-gated |
-| Live E2E tests | `tests/e2e_authz/` - **76 tests** against the running stack |
+| Live E2E tests | `tests/e2e_authz/` - **78 tests** against the running stack |
 | Run everything | `authz/run_e2e.ps1` (Windows) / `authz/run_e2e.sh` (macOS/Linux) |
 | The full file tree | *What this change adds* above |
 

@@ -103,7 +103,8 @@ modes.
 
 **Deployment / env**
 1. `AGENT_AUTHORIZER = authz.enforcement.contextual_authorizer.ContextualOpenFgaAuthorizer`
-   (and `PYTHONPATH` includes `authz/`).
+   (the repo root must be on `PYTHONPATH` so the `authz` package imports). This is the
+   same value for persisted mode too: with a plain `user_id` it runs the stock check.
 2. Proxy sends `user_id = "<oid>|<group names>"` (was `<oid>` alone in persisted
    mode). Entra must emit group **names**, not GUIDs.
 3. `OPENFGA_GROUP_PATTERN` / `OPENFGA_SUPERADMIN_GROUPS` matched to your group
@@ -127,6 +128,25 @@ modes.
 - **Per-object exceptions.** Add the reserved directly-assignable relation on the
   resource (see `resources.fga`) only when the first "groups can't express this"
   case appears.
+
+## Temporary (reservation) networks
+
+Networks the Agent Network Designer creates in reservation mode are named
+`<prefix>-<uuid4>`, stored in the reservations storage (local, S3 or Azure Blob) and
+evicted on a timer. They have **no tuples** by design: their scope is decided only when
+they are promoted to a permanent network, and writing tuples for something that is
+auto-deleted would just leave orphans.
+
+neuro-san authorizes a request **before** it looks a temporary network up in the
+reservations storage, so a plain OpenFGA check would deny it (even for a super admin)
+and the lookup would never run. `ContextualOpenFgaAuthorizer` therefore allows any name
+that `AgentReservation.is_reservation_name` recognises (a trailing UUIDv4), without
+contacting OpenFGA, in both persisted and group mode. Everything else goes to OpenFGA
+unchanged.
+
+What protects a temporary network is its unguessable UUIDv4, its short lifetime and the
+SSO proxy in front; the server does not tie it to its creator. The promotion strategy
+must never produce a permanent name that ends in a UUIDv4.
 
 ## What does not change
 
