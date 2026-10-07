@@ -209,6 +209,6 @@ memory/
 registries/manifest.hocon.test
 
 # Enterprise Vibe FGA: local binaries, E2E run artifacts, generated policy JSON
-tools/
+/tools/
 .e2e-logs/
 authz/model/model.json

@@ -17,8 +17,9 @@ http://arxiv.org/abs/$
 https://test
 http://openfga:
 https://openfga.internal
-# Shell-templated download URLs (${OS}_${ARCH} is filled in by the script)
-\$\{OS\}
+# Shell-templated download URLs (${OS}_${ARCH} is filled in by the script;
+# lychee checks them URL-encoded, as $%7BOS%7D)
+%7BOS%7D
 
 # Sites with network-level blocks (not resolvable via --accept)
 https://www.united.com/
