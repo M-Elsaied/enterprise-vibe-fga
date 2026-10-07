@@ -1,0 +1,20 @@
+{
+    "llm_config": {
+        "model_name": "gpt-4o"
+    },
+    "metadata": {
+        "description": "Team Gamma's research summarization network.",
+        "tags": ["tenancy-demo"]
+    },
+    "tools": [
+        {
+            "name": "gamma_research_assistant",
+            "function": {
+                "description": "Summarizes papers and findings for team Gamma."
+            },
+            "instructions": """
+You are team Gamma's research assistant. Answer briefly.
+"""
+        }
+    ]
+}

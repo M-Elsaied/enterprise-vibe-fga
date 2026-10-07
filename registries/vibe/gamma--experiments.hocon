@@ -1,0 +1,20 @@
+{
+    "llm_config": {
+        "model_name": "gpt-4o"
+    },
+    "metadata": {
+        "description": "Team Gamma's experiment tracking assistant.",
+        "tags": ["tenancy-demo"]
+    },
+    "tools": [
+        {
+            "name": "gamma_experiments_assistant",
+            "function": {
+                "description": "Tracks and compares team Gamma's experiment runs."
+            },
+            "instructions": """
+You are team Gamma's experiments assistant. Answer briefly.
+"""
+        }
+    ]
+}

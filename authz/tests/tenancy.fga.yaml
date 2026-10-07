@@ -1,17 +1,17 @@
 name: vibe-tenancy
-model_file: ../model/fga.mod
+model_file: ../model/full.fga.mod
 tuples:
   # platform + super admin (core team)
   - {user: "user:sam", relation: member, object: "group:core"}
-  - {user: "group:core#member", relation: super_admin, object: "platform:vibe"}
+  - {user: "group:core#member", relation: super_admin, object: "platform:main"}
   # tenant alpha: admin ada, member alice
-  - {user: "platform:vibe", relation: platform, object: "tenant:alpha"}
+  - {user: "platform:main", relation: platform, object: "tenant:alpha"}
   - {user: "user:ada", relation: member, object: "group:alpha-admins"}
   - {user: "group:alpha-admins#member", relation: admin, object: "tenant:alpha"}
   - {user: "user:alice", relation: member, object: "group:alpha-team"}
   - {user: "group:alpha-team#member", relation: member, object: "tenant:alpha"}
   # tenant beta: member bob
-  - {user: "platform:vibe", relation: platform, object: "tenant:beta"}
+  - {user: "platform:main", relation: platform, object: "tenant:beta"}
   - {user: "user:bob", relation: member, object: "group:beta-team"}
   - {user: "group:beta-team#member", relation: member, object: "tenant:beta"}
   # networks: private to alpha / published platform-wide / shared to beta only
@@ -32,12 +32,12 @@ tuples:
   # llm entitlements: default for all, premium approved for alpha only.
   # Every llm_model/feature object needs its platform link tuple (written at
   # catalog registration) or super_admin does not inherit onto it.
-  - {user: "platform:vibe", relation: platform, object: "llm_model:centralized-default"}
-  - {user: "platform:vibe", relation: platform, object: "llm_model:premium-opus"}
+  - {user: "platform:main", relation: platform, object: "llm_model:centralized-default"}
+  - {user: "platform:main", relation: platform, object: "llm_model:premium-opus"}
   - {user: "user:*", relation: available_to, object: "llm_model:centralized-default"}
   - {user: "tenant:alpha#member", relation: available_to, object: "llm_model:premium-opus"}
   # byom feature enabled for alice only
-  - {user: "platform:vibe", relation: platform, object: "feature:byom"}
+  - {user: "platform:main", relation: platform, object: "feature:byom"}
   - {user: "user:alice", relation: enabled_for, object: "feature:byom"}
 
 tests:
@@ -45,7 +45,9 @@ tests:
     check:
       - user: user:alice
         object: agent_network:alpha--private
-        assertions: {can_invoke: true, can_edit: true, can_publish: false, can_delete: true}
+        # can_delete tightened in the studio-rbac restructure: deletion is
+        # admin/super_admin only (ladder matrix); builders edit but don't delete.
+        assertions: {can_invoke: true, can_edit: true, can_publish: false, can_delete: false}
       - user: user:ada
         object: agent_network:alpha--private
         assertions: {can_invoke: true, can_publish: true, can_delete: true}

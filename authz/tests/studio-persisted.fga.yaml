@@ -1,0 +1,147 @@
+name: studio-rbac-persisted
+# Studio profile (core.fga.mod): four-role ladder, multi-tenant, PERSISTED mode -
+# role tuples stored like any other tuple (file-level tuples are written to the
+# test store). Two tenants prove isolation; a multi-team user proves per-tenant
+# role resolution; group indirection is covered for sam (super) and dina (dev).
+model_file: ../model/core.fga.mod
+tuples:
+  # structural parents (always persisted, in every mode)
+  - {user: "platform:main", relation: platform, object: "tenant:alpha"}
+  - {user: "platform:main", relation: platform, object: "tenant:beta"}
+  - {user: "tenant:alpha", relation: tenant, object: "agent_network:alpha--net"}
+  - {user: "tenant:beta",  relation: tenant, object: "agent_network:beta--net"}
+  - {user: "tenant:alpha", relation: tenant, object: "tool:alpha-tool"}
+  # built-ins are parented to EVERY tenant (multiple parent tuples = union)
+  - {user: "tenant:alpha", relation: tenant, object: "special_agent:agent_network_designer"}
+  - {user: "tenant:beta",  relation: tenant, object: "special_agent:agent_network_designer"}
+  # roles (persisted mode)
+  - {user: "user:sam", relation: member, object: "group:core"}
+  - {user: "group:core#member", relation: super_admin, object: "platform:main"}
+  - {user: "user:adam", relation: admin, object: "tenant:alpha"}
+  - {user: "user:dina", relation: member, object: "group:g-alpha-dev"}
+  - {user: "group:g-alpha-dev#member", relation: developer, object: "tenant:alpha"}
+  - {user: "user:ana", relation: analyst, object: "tenant:alpha"}
+  - {user: "user:bob", relation: developer, object: "tenant:beta"}
+  - {user: "user:mia", relation: developer, object: "tenant:alpha"}
+  - {user: "user:mia", relation: analyst, object: "tenant:beta"}
+
+tests:
+  - name: ladder matrix on agent networks
+    check:
+      - user: user:adam
+        object: agent_network:alpha--net
+        assertions: {can_read: true, can_update: true, can_delete: true, can_execute: true}
+      - user: user:dina
+        object: agent_network:alpha--net
+        assertions: {can_read: true, can_update: true, can_delete: false, can_execute: true}
+      - user: user:ana
+        object: agent_network:alpha--net
+        assertions: {can_read: true, can_update: false, can_delete: false, can_execute: true}
+      - user: user:sam
+        object: agent_network:alpha--net
+        assertions: {can_read: true, can_update: true, can_delete: true, can_execute: true}
+      - user: user:sam
+        object: agent_network:beta--net
+        assertions: {can_read: true, can_delete: true}
+
+  - name: cross-tenant isolation
+    check:
+      - user: user:bob
+        object: agent_network:alpha--net
+        assertions: {can_read: false, can_update: false, can_delete: false, can_execute: false}
+      - user: user:dina
+        object: agent_network:beta--net
+        assertions: {can_read: false, can_execute: false}
+      - user: user:adam
+        object: agent_network:beta--net
+        assertions: {can_read: false, can_delete: false}
+
+  - name: multi-team user has per-tenant roles
+    check:
+      - user: user:mia
+        object: agent_network:alpha--net
+        assertions: {can_update: true, can_delete: false}
+      - user: user:mia
+        object: agent_network:beta--net
+        assertions: {can_read: true, can_execute: true, can_update: false}
+    list_objects:
+      - user: user:mia
+        type: agent_network
+        assertions:
+          can_read: [agent_network:alpha--net, agent_network:beta--net]
+          can_update: [agent_network:alpha--net]
+
+  - name: create is tenant-scoped and excludes analyst
+    check:
+      - user: user:adam
+        object: tenant:alpha
+        assertions: {can_create_resources: true, can_administer: true}
+      - user: user:dina
+        object: tenant:alpha
+        assertions: {can_create_resources: true, can_administer: false}
+      - user: user:ana
+        object: tenant:alpha
+        assertions: {can_create_resources: false}
+      - user: user:bob
+        object: tenant:alpha
+        assertions: {can_create_resources: false}
+      - user: user:sam
+        object: tenant:beta
+        assertions: {can_create_resources: true, can_administer: true}
+
+  - name: tools have CRUD but the same ladder
+    check:
+      - user: user:ana
+        object: tool:alpha-tool
+        assertions: {can_read: true, can_update: false, can_delete: false}
+      - user: user:dina
+        object: tool:alpha-tool
+        assertions: {can_update: true, can_delete: false}
+      - user: user:adam
+        object: tool:alpha-tool
+        assertions: {can_delete: true}
+
+  - name: special agents gate analysts out
+    check:
+      - user: user:dina
+        object: special_agent:agent_network_designer
+        assertions: {can_access: true}
+      - user: user:adam
+        object: special_agent:agent_network_designer
+        assertions: {can_access: true}
+      - user: user:bob
+        object: special_agent:agent_network_designer
+        assertions: {can_access: true}
+      - user: user:ana
+        object: special_agent:agent_network_designer
+        assertions: {can_access: false}
+      - user: user:sam
+        object: special_agent:agent_network_designer
+        assertions: {can_access: true}
+
+  - name: a built-in written under the wrong type grants nothing
+    # regression for the write-type vs check-type bug: no agent_network object
+    # for the designer exists, so even an admin gets false on that id.
+    check:
+      - user: user:adam
+        object: agent_network:agent_network_designer
+        assertions: {can_read: false, can_execute: false}
+
+  - name: listing is scoped per persona
+    list_objects:
+      - user: user:dina
+        type: agent_network
+        assertions:
+          can_read: [agent_network:alpha--net]
+      - user: user:ana
+        type: agent_network
+        assertions:
+          can_execute: [agent_network:alpha--net]
+      - user: user:bob
+        type: agent_network
+        assertions:
+          can_read: [agent_network:beta--net]
+      - user: user:sam
+        type: agent_network
+        assertions:
+          can_read: [agent_network:alpha--net, agent_network:beta--net]

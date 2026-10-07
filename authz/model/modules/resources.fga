@@ -1,0 +1,60 @@
+module resources
+
+# Studio resource types with the four-role ladder verbs. This module NEVER
+# references relations from optional modules (marketplace/connectors/
+# entitlements) so the core manifest compiles without them.
+#
+# Ladder matrix (per tenant):
+#   super_admin  create+read+update+delete+execute  + special access
+#   admin        create+read+update+delete+execute  + special access
+#   developer    create+read+update+execute (no delete) + special access
+#   analyst      read+execute only, no special access
+# The object id of an agent_network MUST equal the served network name
+# (the .hocon filename stem).
+
+# RESERVED DENY-OVERRIDE HOOK (deliberately NOT active).
+# The ladder is pure additive-union (most-permissive-wins), which is the industry
+# default (GitHub/GitLab/Kubernetes/Snowflake). The high-blast-radius systems
+# (Google Cloud IAM Deny, the Zanzibar family) add a higher-priority exclusion
+# for hard guardrails - suspension/legal-hold/"analyst-only regardless". When
+# that need arrives, add it as an exclusion rather than inventing it ad hoc:
+#     define blocked: [user, group#member]
+#     define can_execute: (super_admin from tenant or ... or analyst from tenant) but not blocked
+# `but not` is evaluated as set-difference (deny beats grant), the same shape as
+# GCP's "deny overrides allow". Keep it in ONE relation family and cover it with
+# deny-case tests before shipping.
+#
+# RESERVED PER-OBJECT GRANT HOOK (also NOT active).
+# The ladder grants at the TENANT level: a role covers every resource the tenant
+# owns. The hybrid model's exception lane (admin API POST /tenants/{t}/direct-
+# grants) grants a ladder role directly to a user on a tenant - still tenant-wide.
+# Granting ONE user access to ONE specific network (finer than team x role) needs
+# a directly-assignable relation on the resource, because the verbs below are
+# COMPUTED (from tenant) and cannot take a [user] tuple. When that need arrives:
+#     define runner: [user, group#member]
+#     define can_execute: (super_admin from tenant or ... or analyst from tenant) or runner
+# Then `user:X runner agent_network:Y` grants exactly one network. Add it as a
+# direct relation feeding the verb; do not fold per-object grants into the ladder.
+type agent_network
+  relations
+    define tenant: [tenant]
+    define can_read: super_admin from tenant or admin from tenant or developer from tenant or analyst from tenant
+    define can_update: super_admin from tenant or admin from tenant or developer from tenant
+    define can_delete: super_admin from tenant or admin from tenant
+    define can_execute: super_admin from tenant or admin from tenant or developer from tenant or analyst from tenant
+
+# A callable tool exposed to agents: CRUD, no execute verb.
+type tool
+  relations
+    define tenant: [tenant]
+    define can_read: super_admin from tenant or admin from tenant or developer from tenant or analyst from tenant
+    define can_update: super_admin from tenant or admin from tenant or developer from tenant
+    define can_delete: super_admin from tenant or admin from tenant
+
+# The privileged built-in agents (designer, editor, instruction editor).
+# A DISTINCT type - never folded into agent_network - so a provisioning
+# write under the wrong type cannot silently satisfy checks. Analyst excluded.
+type special_agent
+  relations
+    define tenant: [tenant]
+    define can_access: super_admin from tenant or admin from tenant or developer from tenant

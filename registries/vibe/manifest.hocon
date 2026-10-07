@@ -1,8 +1,24 @@
 {
     # Tenancy demo networks. Names follow <tenant-slug>--<network-slug> so the
     # served network name (hocon filename stem) matches the agent_network
-    # object id in the OpenFGA store.
+    # object id in the OpenFGA store. Four teams: alpha, beta, gamma, delta.
     "alpha--private.hocon": true,
     "alpha--public.hocon": true,
+    "alpha--support.hocon": true,
+    "alpha--reports.hocon": true,
     "beta--internal.hocon": true,
+    "beta--pipeline.hocon": true,
+    "gamma--research.hocon": true,
+    "gamma--experiments.hocon": true,
+    "delta--onboarding.hocon": true,
+
+    # Shared upstream tool-networks, adopted per tenant. Copied (not referenced)
+    # from registries/tools/ because a manifest entry's path prefix becomes part
+    # of the served agent name - "../tools/x.hocon" would serve "../tools/x".
+    # To the runtime they are agent networks like any other, so the same
+    # can_execute ladder governs them; ownership comes from the
+    # resource->tenant parent tuple, not from the name.
+    "ddgs_search.hocon": true,
+    "agent_network_html_creator.hocon": true,
+    "arxiv_retriever.hocon": true,
 }

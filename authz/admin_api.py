@@ -28,6 +28,7 @@ Run:  .venv\\Scripts\\python.exe authz\\admin_api.py   (port 8300)
 
 import json
 import os
+import sys
 import time
 from typing import Any, Dict, List, Optional
 
@@ -36,9 +37,20 @@ import uvicorn
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
+# so `from enforcement import ...` resolves when run as a script (authz/admin_api.py)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from enforcement import resource_map  # noqa: E402
+from enforcement.client import StudioAuthzClient  # noqa: E402
+from enforcement.inspector import AuthorizationInspector, InspectorForbidden  # noqa: E402
+from enforcement.preflight import assert_openfga_reachable  # noqa: E402
+from enforcement.provision import Provisioner  # noqa: E402
+
 FGA = os.environ.get("FGA_API_URL", "http://127.0.0.1:18080")
 STORE_NAME = os.environ.get("FGA_STORE_NAME", "vibe-e2e")
-PLATFORM = os.environ.get("PLATFORM_ID", "vibe")
+# Single platform-singleton id, shared with the enforcement library
+# (context_builder reads the same var). Both MUST resolve to the same value or
+# super-admin tuples land on a different platform object than checks look at.
+PLATFORM = os.environ.get("OPENFGA_PLATFORM_ID", "main")
 PORT = int(os.environ.get("ADMIN_API_PORT", "8300"))
 AUDIT_LOG = os.environ.get(
     "ADMIN_AUDIT_LOG",
@@ -155,6 +167,16 @@ class UserRef(BaseModel):
     user: str
 
 
+class RoleGrant(BaseModel):
+    user: str
+    role: str
+
+
+# The ladder roles a direct (exception-path) grant may assign on a tenant.
+# super_admin is platform-scoped and change-controlled, so it is not grantable here.
+LADDER_ROLES = ("admin", "developer", "analyst")
+
+
 # ----------------------------------------------------------------- endpoints
 
 @app.get("/healthz")
@@ -216,6 +238,46 @@ def remove_admin(tenant: str, user: str, user_id: str = Header(None, convert_und
     return {"tenant": tenant, "user": user, "outcome": outcome}
 
 
+@app.post("/tenants/{tenant}/direct-grants")
+def direct_grant(tenant: str, body: RoleGrant,
+                 user_id: str = Header(None, convert_underscores=False)):
+    """The EXCEPTION lane of the hybrid model: grant a ladder role to a user
+    DIRECTLY on a tenant, bypassing the IdP group path.
+
+    Routine roles come from Entra groups (Option B, contextual - nothing
+    persisted). This is for what groups cannot express: contractors, break-glass,
+    one-offs. The tuple written here PERSISTS and unions with any group-derived
+    contextual roles at check time. Every grant is FGA-checked (caller must
+    administer the tenant) and audited."""
+    caller = caller_id(user_id)
+    require_tenant_admin(caller, tenant)
+    if body.role not in LADDER_ROLES:
+        raise HTTPException(400, f"role must be one of {LADDER_ROLES} "
+                                 "(super_admin is platform-scoped, not grantable here)")
+    outcome = fga_write(f"user:{body.user}", body.role, f"tenant:{tenant}")
+    audit(caller, "direct_grant", f"user:{body.user} -{body.role}-> tenant:{tenant}", outcome)
+    return {"tenant": tenant, "user": body.user, "role": body.role, "outcome": outcome}
+
+
+@app.delete("/tenants/{tenant}/direct-grants/{role}/{user}")
+def direct_revoke(tenant: str, role: str, user: str,
+                  user_id: str = Header(None, convert_underscores=False)):
+    """Revoke a direct (exception-path) ladder grant. Group-derived roles are
+    unaffected - they are not persisted here."""
+    caller = caller_id(user_id)
+    require_tenant_admin(caller, tenant)
+    if role not in LADDER_ROLES:
+        raise HTTPException(400, f"role must be one of {LADDER_ROLES}")
+    if role == "admin":
+        current = admins_of(tenant)
+        if user in current and len(current) <= 1:
+            audit(caller, "direct_revoke", f"user:{user} -admin-> tenant:{tenant}", "refused-last-admin")
+            raise HTTPException(409, f"user:{user} is the last admin of tenant:{tenant}")
+    outcome = fga_delete(f"user:{user}", role, f"tenant:{tenant}")
+    audit(caller, "direct_revoke", f"user:{user} -{role}-> tenant:{tenant}", outcome)
+    return {"tenant": tenant, "user": user, "role": role, "outcome": outcome}
+
+
 @app.post("/idp/groups/{group}/members")
 def idp_add_group_member(group: str, body: UserRef,
                          user_id: str = Header(None, convert_underscores=False)):
@@ -266,6 +328,73 @@ def access_review(tenant: str, user_id: str = Header(None, convert_underscores=F
     }
 
 
+# --------------------------------------------------- atomic tenant onboarding
+
+@app.post("/tenants/{tenant}/onboard", status_code=201)
+def onboard_tenant(tenant: str, user_id: str = Header(None, convert_underscores=False)):
+    """Persisted-mode onboarding in ONE atomic write: the tenant->platform link
+    AND its three convention groups (NSAN-<TEAM>-{ADMINS,DEVELOPERS,ANALYSTS})
+    bound to the ladder roles. A tenant can never come up half-provisioned, and
+    creating the NSAN-* groups stays with this controlled path - never open
+    self-service (group creation IS access granting)."""
+    caller = caller_id(user_id)
+    require_super_admin(caller)
+    provisioner = Provisioner(FGA, STATE["store_id"], STATE["model_id"])
+    outcome = provisioner.onboard_tenant(tenant)
+    audit(caller, "onboard_tenant", f"tenant:{tenant}", outcome)
+    return {"tenant": tenant, "outcome": outcome,
+            "groups": [f"NSAN-{tenant.upper()}-ADMINS",
+                       f"NSAN-{tenant.upper()}-DEVELOPERS",
+                       f"NSAN-{tenant.upper()}-ANALYSTS"]}
+
+
+# --------------------------------------------------- authorization inspector
+# Read-only visibility for admins/super_admins. NOT role assignment (that stays
+# in the IdP). Every route is self-gated by the inspector against OpenFGA.
+
+def _inspector() -> AuthorizationInspector:
+    client = StudioAuthzClient(api_url=FGA, store_id=STATE["store_id"],
+                               model_id=STATE["model_id"],
+                               profile=resource_map.FULL_PROFILE)
+    return AuthorizationInspector(client)
+
+
+@app.get("/inspect/tenants/{tenant}/resource/{resource}")
+def inspect_resource(tenant: str, resource: str, subject: str,
+                     type: Optional[str] = None,
+                     user_id: str = Header(None, convert_underscores=False)):
+    """The subject's full verb set on one resource (read/update/delete/...)."""
+    caller = caller_id(user_id)
+    try:
+        return _inspector().resource_access(caller, subject, resource, tenant, type)
+    except InspectorForbidden as err:
+        raise HTTPException(403, str(err))
+
+
+@app.get("/inspect/tenants/{tenant}/explain")
+def inspect_explain(tenant: str, subject: str, action: str, resource: str,
+                    type: Optional[str] = None,
+                    user_id: str = Header(None, convert_underscores=False)):
+    """Allow/deny for (subject, action, resource) plus the grant tree (the why)."""
+    caller = caller_id(user_id)
+    try:
+        return _inspector().explain(caller, subject, action, resource, tenant, type)
+    except InspectorForbidden as err:
+        raise HTTPException(403, str(err))
+
+
+@app.get("/inspect/tenants/{tenant}/who-can")
+def inspect_who_can(tenant: str, action: str, resource: str,
+                    type: Optional[str] = None,
+                    user_id: str = Header(None, convert_underscores=False)):
+    """Which users can perform `action` on the resource (reverse lookup)."""
+    caller = caller_id(user_id)
+    try:
+        return _inspector().who_can(caller, action, resource, tenant, type)
+    except InspectorForbidden as err:
+        raise HTTPException(403, str(err))
+
+
 # ------------------------------------------------------------------ startup
 
 @app.on_event("startup")
@@ -282,4 +411,5 @@ def resolve_store() -> None:
 
 
 if __name__ == "__main__":
+    assert_openfga_reachable(FGA)   # friendly hint before startup, not a traceback
     uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="warning")

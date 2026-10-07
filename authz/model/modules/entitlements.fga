@@ -1,0 +1,15 @@
+module entitlements
+
+# Optional module: platform-governed entitlements.
+type llm_model                               # llm_model:centralized-default, ...
+  relations
+    define platform: [platform]
+    define available_to: [user:*, tenant#member]   # user:* on the default; tenant#member = approval
+    define can_use: available_to or super_admin from platform
+    define can_approve: super_admin from platform
+
+type feature                                 # feature:byom
+  relations
+    define platform: [platform]
+    define enabled_for: [user, tenant#member]
+    define can_use: enabled_for or super_admin from platform

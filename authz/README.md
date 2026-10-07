@@ -1,9 +1,43 @@
 # The authorization layer
 
-This directory holds the OpenFGA model, its tests, the demo seed state, and the E2E runner.
+This directory holds the OpenFGA model (modular, two manifests - see the root README's
+"Profiles" section), its tests, the demo seed state, the E2E runner, and the
+`enforcement/` library for the studio profile (Entra-style header identity -> group
+naming convention -> per-request contextual tuples -> Check/ListObjects; provisioning
+routed through the same `resource_map` as checking, so an object can never be written
+under one type and checked under another).
+
+Model commands (the `--format modular` flag matters - manifest names must end in
+`fga.mod` and module paths may not use `..`):
+
+```powershell
+cd authz\model
+..\..\tools\fga.exe model validate --file core.fga.mod --format modular
+..\..\tools\fga.exe model validate --file full.fga.mod --format modular
+cd ..\tests
+..\..\tools\fga.exe model test --tests studio-persisted.fga.yaml
+..\..\tools\fga.exe model test --tests studio-contextual.fga.yaml   # Option B: per-test
+                                    # tuples are sent as CONTEXTUAL tuples by the CLI
+..\..\tools\fga.exe model test --tests tenancy.fga.yaml
+..\..\tools\fga.exe model test --tests nested-tenants.fga.yaml      # parent/child tenants
+```
 
 ## Getting the binaries (one time)
 
+Full first-timer setup (both OSes) is in the root README's "Getting started from scratch".
+Binaries only:
+
+macOS / Linux:
+```bash
+mkdir -p tools
+ARCH=$([ "$(uname -m)" = "arm64" ] && echo arm64 || echo amd64)
+OS=$([ "$(uname)" = "Darwin" ] && echo darwin || echo linux)
+curl -sSL "https://github.com/openfga/openfga/releases/download/v1.18.3/openfga_1.18.3_${OS}_${ARCH}.tar.gz" | tar -xz -C tools openfga
+curl -sSL "https://github.com/openfga/cli/releases/download/v0.7.20/fga_0.7.20_${OS}_${ARCH}.tar.gz"          | tar -xz -C tools fga
+chmod +x tools/openfga tools/fga
+```
+
+Windows (PowerShell):
 ```powershell
 New-Item -ItemType Directory -Force tools | Out-Null
 Invoke-WebRequest "https://github.com/openfga/openfga/releases/download/v1.18.3/openfga_1.18.3_windows_amd64.tar.gz" -OutFile tools\openfga.tar.gz
@@ -17,8 +51,9 @@ models and consistency parameters).
 
 ## The four test layers
 
-1. **Model tests** (`tests/tenancy.fga.yaml`): `fga model test` against the CLI's built-in
-   engine. Runs in CI with no server. Asserts grants AND denials: tenant isolation,
+1. **Model tests** (`tests/*.fga.yaml`): `fga model test` against the CLI's built-in
+   engine, no server needed. Gated in CI by `.github/workflows/authz.yml` (validates both
+   manifests, runs all three suites). Asserts grants AND denials: tenant isolation,
    marketplace publish (org-wide and targeted), super-admin transitivity, time-boxed
    connector access (condition context both sides of expiry), LLM and BYOM entitlements,
    and ListObjects visibility per user.
@@ -36,7 +71,7 @@ models and consistency parameters).
 
 - Edit the module files, then validate and test from this directory's `model/` and `tests/`:
   ```powershell
-  cd authz\model;  ..\..\tools\fga.exe model validate --file fga.mod
+  cd authz\model;  ..\..\tools\fga.exe model validate --file core.fga.mod --format modular
   cd ..\tests;     ..\..\tools\fga.exe model test --tests tenancy.fga.yaml
   ```
   (the CLI resolves module paths relative to the current directory)
@@ -64,3 +99,23 @@ table below maps events to tuples regardless of which writer performs them.
 | LLM approved for tenant | admin API (super admin) | `available_to` + the object's `platform` link |
 | BYOM enabled | admin API (super admin) | `enabled_for` on `feature:byom` |
 | Scheduled networks | seed | `user:system can_invoke agent_network:<name>` |
+| Child tenant under a parent | seed / admin (super admin) | `tenant:<parent> parent tenant:<child>` (no `platform` link needed for the child) |
+| New tenant, convention groups (persisted mode) | admin API `POST /tenants/{t}/onboard` (super admin) | `platform` link + the three `NSAN-<TEAM>-*` groups bound to admin/developer/analyst, in one atomic write |
+| Exception grant (contractor, break-glass) | admin API `POST /tenants/{t}/direct-grants` | `user:<oid> <admin\|developer\|analyst> tenant:<t>` |
+| Temporary (reservation) network created | nobody | **no tuples** - the authorizer allows `<prefix>-<uuid4>` names locally; scope is decided when the network is promoted |
+| Roles in group mode (Option B) | nobody | **no tuples** - roles arrive per request from the groups in the header |
+
+## The enforcement library (`enforcement/`)
+
+| Module | What it does |
+|---|---|
+| `contextual_authorizer.py` | The runtime `AGENT_AUTHORIZER`. Plain `user_id` -> the stock persisted check; `<oid>\|<groups>` -> group-derived roles sent as contextual tuples; temporary (reservation) network names -> allowed locally, OpenFGA not contacted. One class for every mode. |
+| `group_mapper.py` | IdP group names -> `(tenant, role)`: `NSAN-<TEAM>-ADMINS/DEVELOPERS/ANALYSTS`, `NSAN-SUPERADMINS`. The team is lowercased and must equal the tenant id. |
+| `context_builder.py` | `(tenant, role)` pairs -> contextual tuples (max 100 per request). |
+| `middleware.py` | Trusted-header identity for platform services (Starlette). |
+| `client.py` | Check / ListObjects / Expand / ListUsers, routed through `resource_map`. |
+| `resource_map.py` | The single writer/checker routing table: an object can never be written under one type and checked under another. |
+| `provision.py` | Structural writes (resource -> tenant, single owner) and atomic tenant onboarding. |
+| `inspector.py` | Read-only "who can do what, and why" for admins; itself authorization-gated. |
+| `preflight.py` | Friendly startup check that OpenFGA is reachable (catches the https-vs-http mistake). |
+| `dev_identity.py` | Persona headers for local testing; off unless `OPENFGA_DEV_IDENTITY=enabled`. Never in production. |

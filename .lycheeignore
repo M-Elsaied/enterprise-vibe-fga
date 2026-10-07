@@ -15,6 +15,11 @@ http://otherdomain.com/
 file:///path/to/
 http://arxiv.org/abs/$
 https://test
+http://openfga:
+https://openfga.internal
+# Shell-templated download URLs (${OS}_${ARCH} is filled in by the script;
+# lychee checks them URL-encoded, as $%7BOS%7D)
+%7BOS%7D
 
 # Sites with network-level blocks (not resolvable via --accept)
 https://www.united.com/
@@ -28,6 +33,7 @@ https://raw.githubusercontent.com/anthropics/skills/main/skills/internal-comms/
 https://api.anthropic.com/
 https://api.smith.langchain.com/
 https://api.salesforce.com
+https://api.openai.com/v1/videos
 
 # Ignores Jinja2 "{{.*}}" template pattern
 file://.*%7B%7B.*%7D%7D

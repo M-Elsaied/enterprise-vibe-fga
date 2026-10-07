@@ -1,0 +1,49 @@
+# Studio-profile structural graph (Option B persists ONLY this).
+# Role tuples never appear here - the enforcement library injects them per
+# request; the persisted-mode demo roles live in studio-persisted-demo.yaml.
+# Four teams; networks cover both the console demo ids (*--net) and every
+# network the demo runtime actually serves (registries/vibe).
+
+# tenants
+- {user: "platform:main", relation: platform, object: "tenant:alpha"}
+- {user: "platform:main", relation: platform, object: "tenant:beta"}
+- {user: "platform:main", relation: platform, object: "tenant:gamma"}
+- {user: "platform:main", relation: platform, object: "tenant:delta"}
+
+# agent networks
+- {user: "tenant:alpha", relation: tenant, object: "agent_network:alpha--net"}
+- {user: "tenant:alpha", relation: tenant, object: "agent_network:alpha--private"}
+- {user: "tenant:alpha", relation: tenant, object: "agent_network:alpha--public"}
+- {user: "tenant:alpha", relation: tenant, object: "agent_network:alpha--support"}
+- {user: "tenant:alpha", relation: tenant, object: "agent_network:alpha--reports"}
+- {user: "tenant:beta",  relation: tenant, object: "agent_network:beta--net"}
+- {user: "tenant:beta",  relation: tenant, object: "agent_network:beta--internal"}
+- {user: "tenant:beta",  relation: tenant, object: "agent_network:beta--pipeline"}
+- {user: "tenant:gamma", relation: tenant, object: "agent_network:gamma--research"}
+- {user: "tenant:gamma", relation: tenant, object: "agent_network:gamma--experiments"}
+- {user: "tenant:delta", relation: tenant, object: "agent_network:delta--onboarding"}
+
+# shared upstream tool-networks, adopted per tenant (served in the sidebar,
+# governed by the same can_execute ladder as any network)
+- {user: "tenant:alpha", relation: tenant, object: "agent_network:ddgs_search"}
+- {user: "tenant:beta",  relation: tenant, object: "agent_network:agent_network_html_creator"}
+- {user: "tenant:gamma", relation: tenant, object: "agent_network:arxiv_retriever"}
+
+# tools
+- {user: "tenant:alpha", relation: tenant, object: "tool:alpha-tool"}
+- {user: "tenant:beta",  relation: tenant, object: "tool:beta-etl-tool"}
+- {user: "tenant:gamma", relation: tenant, object: "tool:gamma-lab-tool"}
+
+# the three built-in special agents, available in every tenant
+- {user: "tenant:alpha", relation: tenant, object: "special_agent:agent_network_designer"}
+- {user: "tenant:beta",  relation: tenant, object: "special_agent:agent_network_designer"}
+- {user: "tenant:gamma", relation: tenant, object: "special_agent:agent_network_designer"}
+- {user: "tenant:delta", relation: tenant, object: "special_agent:agent_network_designer"}
+- {user: "tenant:alpha", relation: tenant, object: "special_agent:agent_network_editor"}
+- {user: "tenant:beta",  relation: tenant, object: "special_agent:agent_network_editor"}
+- {user: "tenant:gamma", relation: tenant, object: "special_agent:agent_network_editor"}
+- {user: "tenant:delta", relation: tenant, object: "special_agent:agent_network_editor"}
+- {user: "tenant:alpha", relation: tenant, object: "special_agent:agent_network_instruction_editor"}
+- {user: "tenant:beta",  relation: tenant, object: "special_agent:agent_network_instruction_editor"}
+- {user: "tenant:gamma", relation: tenant, object: "special_agent:agent_network_instruction_editor"}
+- {user: "tenant:delta", relation: tenant, object: "special_agent:agent_network_instruction_editor"}

@@ -66,7 +66,7 @@ to single-agent systems, where no single model has all the expertise or context 
 <!-- pyml disable line-length -->
 | Build a multi-agent network in minutes                                              | Neuro SAN overview                                                                     | Quick start                                                              |
 |-------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------|--------------------------------------------------------------------------|
-| [![Build](./docs/images/designer.png)](https://www.youtube.com/watch?v=wGxvPBN34Mk) | [![Overview](./docs/images/overview.png)](https://www.youtube.com/watch?v=NmniQWQT6vI) | [![Start](./docs/images/nsflow_thumb.png)](https://youtu.be/gfem8ylphWA) |
+| [![Build](./images/designer.png)](https://www.youtube.com/watch?v=wGxvPBN34Mk) | [![Overview](./images/overview.png)](https://www.youtube.com/watch?v=NmniQWQT6vI) | [![Start](./images/nsflow_thumb.png)](https://youtu.be/gfem8ylphWA) |
 
 <!-- pyml enable line-length -->
 ---
@@ -94,7 +94,7 @@ etc.) and deployable in diverse environments (local machines, containers, or clo
 ### Use Cases
 
 Here are a few examples of use-cases that have been implemented with Neuro SAN.
-For more examples, check out [docs/examples.md](docs/examples.md).
+For more examples, check out [docs/examples.md](./examples.md).
 <!-- pyml disable no-inline-html -->
 <table>
   <thead>
@@ -162,7 +162,7 @@ For more examples, check out [docs/examples.md](docs/examples.md).
 </table>
 <!-- pyml enable no-inline-html -->
 
-And many more: check out [docs/examples.md](docs/examples.md).
+And many more: check out [docs/examples.md](./examples.md).
 
 ---
 
@@ -170,7 +170,7 @@ And many more: check out [docs/examples.md](docs/examples.md).
 
 <!-- pyml disable no-inline-html -->
 <p align="left">
-  <img src="./docs/images/neuroai_arch_diagram.png" alt="neuro-san architecture" width="800"/>
+  <img src="./images/neuroai_arch_diagram.png" alt="neuro-san architecture" width="800"/>
 </p>
 <!-- pyml enable no-inline-html -->
 
@@ -235,7 +235,7 @@ Enter numbers separated by commas (default: 1):
 
 1. Set your provider key, e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` or `GOOGLE_API_KEY`
 (or create a `.env` file in the current directory).
-See [docs/api_key.md](docs/api_key.md) for details and other providers.
+See [docs/api_key.md](./api_key.md) for details and other providers.
 
    ```bash
    export OPENAI_API_KEY="XXX"
@@ -261,7 +261,7 @@ You can import the agent networks that ship with `neuro-san-studio` using the `n
 It will run an interactive prompt. You can for instance import the `root` agent networks to use the
 Agent Network Designer to create your own agent network.
 
-See [`docs/cli/import.md`](docs/cli/import.md) for details.
+See [`docs/cli/import.md`](./cli/import.md) for details.
 
 ```bash
 ns import
@@ -318,7 +318,7 @@ Screenshot:
 Use the Agent Network Designer to create your own agent network.
 
 1. From the `nsflow` UI, click the `NEW` button at the top, center of the screen.
-![AND Button](docs/images/agent_network_designer_new_button.png)
+![AND Button](./images/agent_network_designer_new_button.png)
 2. In the new window that opens, type your prompts in the text box in the bottom right
 corner of the screen. Then Agent Network Designer:
    * Creates the agents
@@ -347,7 +347,7 @@ Similarly, you can export an agent network and all its dependencies using the `n
 ns export my_project.hocon
 ```
 
-See [`docs/cli/export.md`](docs/cli/export.md) for details.
+See [`docs/cli/export.md`](./cli/export.md) for details.
 
 ### Command reference
 
@@ -371,26 +371,26 @@ Use `ns <command> --help` for the full flag list of any subcommand.
 
 ## User guide
 
-Ready to dive in? Check out the [user guide](docs/user_guide.md) for a detailed overview of the neuro-san library
+Ready to dive in? Check out the [user guide](./user_guide.md) for a detailed overview of the neuro-san library
 and its features.
 
 ---
 
 ## Tutorial
 
-For a detailed tutorial, refer to [docs/tutorial.md](docs/tutorial.md).
+For a detailed tutorial, refer to [docs/tutorial.md](./tutorial.md).
 
 ---
 
 ## Examples
 
-For examples of agent networks, check out [docs/examples.md](docs/examples.md).
+For examples of agent networks, check out [docs/examples.md](./examples.md).
 
 ---
 
 ## Developer Guide
 
-For the development guide, check out [docs/dev_guide.md](docs/dev_guide.md).
+For the development guide, check out [docs/dev_guide.md](./dev_guide.md).
 
 ---
 
@@ -423,7 +423,7 @@ specification document.
 
 * [Neuro SAN Web Client](https://github.com/cognizant-ai-lab/neuro-san-web-client):
 a basic Flask web client interface for Neuro SAN.
-* [Neuro SAN Slack app](./apps/slack/README.md)
+* [Neuro SAN Slack app](../apps/slack/README.md)
 a Slack integration that lets you interact with Neuro SAN directly from your workspace.
 
 ---

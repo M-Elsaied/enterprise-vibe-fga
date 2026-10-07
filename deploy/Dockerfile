@@ -118,6 +118,10 @@ COPY ./skills ${APP_SOURCE}/skills
 COPY ./deploy/entrypoint.sh ${APP_SOURCE}/deploy/entrypoint.sh
 COPY ./deploy/logging.hocon ${APP_SOURCE}/deploy/logging.hocon
 COPY ./config ${APP_SOURCE}/config
+# authz layer: the model modules + generated model.json (FGA_POLICY_FILE) and the
+# enforcement library must be inside the image, or FGA_POLICY_FILE resolves to a
+# path that does not exist and the runtime fails to start.
+COPY ./authz ${APP_SOURCE}/authz
 # To override the default LLM configuration at runtime, mount your custom
 # llm_config.hocon using a Docker volume, e.g.:
 # docker run -v /path/to/your/llm_config.hocon:${APP_SOURCE}/config/llm_config.hocon ...

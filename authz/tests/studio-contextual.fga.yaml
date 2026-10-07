@@ -1,0 +1,123 @@
+name: studio-rbac-contextual
+# Studio profile, CONTEXTUAL ("Option B") mode: file-level tuples hold ONLY the
+# persisted structural graph (parents). Role tuples appear inside each test's
+# own `tuples` block - the fga CLI sends those as CONTEXTUAL tuples, exactly
+# how the middleware injects roles per request from IdP group headers.
+model_file: ../model/core.fga.mod
+tuples:
+  - {user: "platform:main", relation: platform, object: "tenant:alpha"}
+  - {user: "platform:main", relation: platform, object: "tenant:beta"}
+  - {user: "tenant:alpha", relation: tenant, object: "agent_network:alpha--net"}
+  - {user: "tenant:beta",  relation: tenant, object: "agent_network:beta--net"}
+  - {user: "tenant:alpha", relation: tenant, object: "tool:alpha-tool"}
+  - {user: "tenant:alpha", relation: tenant, object: "special_agent:agent_network_designer"}
+  - {user: "tenant:beta",  relation: tenant, object: "special_agent:agent_network_designer"}
+
+tests:
+  - name: developer role injected per request
+    tuples:
+      - {user: "user:dina", relation: developer, object: "tenant:alpha"}
+    check:
+      - user: user:dina
+        object: agent_network:alpha--net
+        assertions: {can_read: true, can_update: true, can_delete: false, can_execute: true}
+      - user: user:dina
+        object: agent_network:beta--net
+        assertions: {can_read: false}
+      - user: user:dina
+        object: special_agent:agent_network_designer
+        assertions: {can_access: true}
+      - user: user:dina
+        object: tenant:alpha
+        assertions: {can_create_resources: true}
+    list_objects:
+      - user: user:dina
+        type: agent_network
+        assertions:
+          can_read: [agent_network:alpha--net]
+
+  - name: analyst role injected per request
+    tuples:
+      - {user: "user:ana", relation: analyst, object: "tenant:alpha"}
+    check:
+      - user: user:ana
+        object: agent_network:alpha--net
+        assertions: {can_read: true, can_update: false, can_execute: true}
+      - user: user:ana
+        object: special_agent:agent_network_designer
+        assertions: {can_access: false}
+      - user: user:ana
+        object: tenant:alpha
+        assertions: {can_create_resources: false}
+    list_objects:
+      - user: user:ana
+        type: agent_network
+        assertions:
+          can_execute: [agent_network:alpha--net]
+
+  - name: admin role injected per request
+    tuples:
+      - {user: "user:adam", relation: admin, object: "tenant:alpha"}
+    check:
+      - user: user:adam
+        object: agent_network:alpha--net
+        assertions: {can_delete: true}
+      - user: user:adam
+        object: agent_network:beta--net
+        assertions: {can_delete: false, can_read: false}
+
+  - name: super admin is one platform-level contextual tuple
+    # C3 pattern: the middleware injects ONLY platform#super_admin; the
+    # persisted tenant->platform parents carry it into every tenant.
+    tuples:
+      - {user: "user:sam", relation: super_admin, object: "platform:main"}
+    check:
+      - user: user:sam
+        object: agent_network:alpha--net
+        assertions: {can_delete: true, can_execute: true}
+      - user: user:sam
+        object: agent_network:beta--net
+        assertions: {can_delete: true}
+      - user: user:sam
+        object: special_agent:agent_network_designer
+        assertions: {can_access: true}
+      - user: user:sam
+        object: tenant:beta
+        assertions: {can_administer: true, can_create_resources: true}
+    list_objects:
+      - user: user:sam
+        type: agent_network
+        assertions:
+          can_read: [agent_network:alpha--net, agent_network:beta--net]
+
+  - name: multi-team user gets one tuple per membership
+    tuples:
+      - {user: "user:mia", relation: developer, object: "tenant:alpha"}
+      - {user: "user:mia", relation: analyst, object: "tenant:beta"}
+    check:
+      - user: user:mia
+        object: agent_network:alpha--net
+        assertions: {can_update: true}
+      - user: user:mia
+        object: agent_network:beta--net
+        assertions: {can_read: true, can_update: false}
+    list_objects:
+      - user: user:mia
+        type: agent_network
+        assertions:
+          can_read: [agent_network:alpha--net, agent_network:beta--net]
+          can_update: [agent_network:alpha--net]
+
+  - name: no roles means no access anywhere
+    check:
+      - user: user:eve
+        object: agent_network:alpha--net
+        assertions: {can_read: false, can_execute: false}
+      - user: user:eve
+        object: special_agent:agent_network_designer
+        assertions: {can_access: false}
+    list_objects:
+      - user: user:eve
+        type: agent_network
+        assertions:
+          can_read: []

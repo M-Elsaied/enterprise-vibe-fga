@@ -15,7 +15,9 @@ import os
 import pytest
 import requests
 
-BASE = os.environ.get("E2E_BASE", "http://127.0.0.1:8080")
+BASE = os.environ.get("E2E_BASE")
+
+pytestmark = pytest.mark.skipif(not BASE, reason="neuro-san server not running (set E2E_BASE via run_e2e)")
 
 ALL_NETWORKS = {"alpha--private", "alpha--public", "beta--internal"}
 
@@ -35,13 +37,17 @@ def connectivity_status(user, network):
 
 # ---------- concierge listing: each persona sees exactly their world ----------
 
-@pytest.mark.parametrize("user,expected", [
-    ("alice", {"alpha--private", "alpha--public"}),
-    ("ada",   {"alpha--private", "alpha--public"}),
-    ("bob",   {"beta--internal", "alpha--public"}),
-    ("sam",   ALL_NETWORKS),
-    ("eve",   {"alpha--public"}),
-])
+
+@pytest.mark.parametrize(
+    "user,expected",
+    [
+        ("alice", {"alpha--private", "alpha--public"}),
+        ("ada", {"alpha--private", "alpha--public"}),
+        ("bob", {"beta--internal", "alpha--public"}),
+        ("sam", ALL_NETWORKS),
+        ("eve", {"alpha--public"}),
+    ],
+)
 def test_list_is_filtered_per_persona(user, expected):
     assert list_agents(user) == expected
 
@@ -55,21 +61,25 @@ def test_anonymous_sees_only_platform_published():
 
 # ---------- per-network enforcement: 200 vs 403 ----------
 
-@pytest.mark.parametrize("user,network,expected_status", [
-    # tenant isolation
-    ("alice", "alpha--private", 200),
-    ("ada",   "alpha--private", 200),
-    ("bob",   "alpha--private", 403),
-    ("eve",   "alpha--private", 403),
-    ("alice", "beta--internal", 403),
-    ("bob",   "beta--internal", 200),
-    # marketplace publish opens a network to everyone
-    ("eve",   "alpha--public",  200),
-    ("bob",   "alpha--public",  200),
-    # super admin reaches everything
-    ("sam",   "alpha--private", 200),
-    ("sam",   "beta--internal", 200),
-])
+
+@pytest.mark.parametrize(
+    "user,network,expected_status",
+    [
+        # tenant isolation
+        ("alice", "alpha--private", 200),
+        ("ada", "alpha--private", 200),
+        ("bob", "alpha--private", 403),
+        ("eve", "alpha--private", 403),
+        ("alice", "beta--internal", 403),
+        ("bob", "beta--internal", 200),
+        # marketplace publish opens a network to everyone
+        ("eve", "alpha--public", 200),
+        ("bob", "alpha--public", 200),
+        # super admin reaches everything
+        ("sam", "alpha--private", 200),
+        ("sam", "beta--internal", 200),
+    ],
+)
 def test_connectivity_enforcement(user, network, expected_status):
     assert connectivity_status(user, network) == expected_status
 
